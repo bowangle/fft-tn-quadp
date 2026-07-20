@@ -1,0 +1,3 @@
+[submodule "extern/TensorQuadOperation"]
+	path = extern/TensorQuadOperation
+	url = https://github.com/bowangle/TensorQuadOperation.git
