@@ -1,1 +1,4 @@
 build/
+
+# ignore test output
+test/test_*.txt
