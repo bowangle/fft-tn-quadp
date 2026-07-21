@@ -3,6 +3,9 @@
 #include "type_float128_boost.h"
 #include <iostream>
 #include <cmath>
+#include <fstream>
+#include <sys/stat.h>
+#include <sstream>
 
 template<typename RealT>
 double to_double(RealT const& v) { return static_cast<double>(v); }
@@ -68,17 +71,40 @@ void test_build(const std::string& name, int r, int chi, int n_points = 10)
 
 template<typename ComplexT>
 void test_error_range(const std::string& name, int r, int chi_max, int n_points = 1000){
+    // Create output directory
+    mkdir("test/output", 0755);
+
+    // Build filename: e.g. test/output/error_chi_max40_r30_complex_double.txt
+    std::string safe_name = name;
+    for (auto& c : safe_name) {
+        if (c == '<' || c == '>' || c == ':') c = '_';
+    }
+    std::ostringstream fname;
+    fname << "test/output/error_chi_max" << chi_max << "_r" << r << "_" << safe_name << ".txt";
+    std::ofstream out(fname.str());
+
+    std::cout << "Saving to " << fname.str() << "\n";
+    out << "# chi  max|MPO-F|  rms|MPO-F|  rms|F|  relative_rms\n";
+
     for (int i=2; i<chi_max+1; i++){
         MPO<ComplexT> mpo = magic_tensor_qft::build_qft_mpo_magic<ComplexT>(r, i);
         auto err = magic_tensor_qft::compute_qft_mpo_error<ComplexT>(mpo, n_points);
+        double rel_rms = err[1]/err[2];
+
         std::cout << name << " " << i <<"\n";
         std::cout << "  Error vs exact QFT (" << n_points << " samples):\n";
         std::cout << "    max |MPO - F|  = " << err[0] << "\n";
         std::cout << "    rms |MPO - F|  = " << err[1] << "\n";
         std::cout << "    rms |F|        = " << err[2] << "\n";
-        std::cout << "    relative rms   = " << err[1]/err[2] << "\n";
+        std::cout << "    relative rms   = " << rel_rms << "\n";
+
+        out << i << " " << err[0] << " " << err[1] << " " << err[2] << " " << rel_rms << "\n";
+
+        // Here, use compress_svd on the mpo. Recompute all the error and record the bond dimension chi.
+        // Then save this new data in another folder.
     }
     std::cout <<"\n\n";
+    out.close();
 }
 
 template<typename ComplexT>
@@ -105,9 +131,11 @@ int main()
     test_build<std::complex<double>>("complex<double>", r, chi);
     test_build<Cdd_128>("Cdd_128", r, chi);
     test_build<Cfloat128>("Cfloat128", r, chi);
+    
 
     test_error_range<std::complex<double>>("complex<double>", r, chi_max);
     test_error_range<Cdd_128>("Cdd_128", r, chi_max);
+    test_error_range<Cfloat128>("Cfloat128", r, chi_max);
 
     test_error_range<std::complex<double>>("complex<double>", r1, chi_max);
     test_error_range<Cdd_128>("Cdd_128", r1, chi_max);

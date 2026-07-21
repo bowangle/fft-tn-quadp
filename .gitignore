@@ -2,3 +2,4 @@ build/
 
 # ignore test output
 test/test_*.txt
+test/output/error_*.txt
