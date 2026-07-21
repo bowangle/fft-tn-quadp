@@ -52,11 +52,9 @@ target_link_libraries(project_deps INTERFACE qd quadmath OpenMP::OpenMP_CXX)
 
 # ---- test targets ---------------------------------------------------------------
 set(TEST_TARGETS
-    Test1
     Test_qft_mpo
 )
 
-add_executable(Test1 test/test.cpp)
 add_executable(Test_qft_mpo test/test_magic_qft_mpo.cpp)
 
 foreach(_tgt IN LISTS TEST_TARGETS)

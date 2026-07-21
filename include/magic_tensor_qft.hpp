@@ -4,8 +4,9 @@
 #include <vector>
 #include <complex>
 #include <cstddef>
+#include <random>
 
-#include "tt_base.h"
+#include "mpo_base.h"
 #include "type_double_double.h"
 #include "type_float128_boost.h"
 #include <boost/math/constants/constants.hpp>
@@ -34,7 +35,7 @@ Real pi() {
 }
 
 template<> inline double     pi<double>()     { return M_PI; }
-template<> inline dd_128     pi<dd_128>()     { return dd_real::_pi; }
+template<> inline dd_128     pi<dd_128>()     { return dd_128::_pi; }
 template<> inline float128   pi<float128>()   { return boost::math::constants::pi<float128>(); }
 
 // ============================================================
@@ -85,6 +86,9 @@ std::vector<std::complex<Real>> lagrange_basis_values(
 //
 //   M^n_{αβ} = exp(-iπ (t_n ω_n + c_α t_n)) * P_β((c_α+ω_n)/2)
 // ============================================================
+// Returns flat-packed W tensors.  For each site n:
+//   M^n_{αβ} = exp(-iπ (t_n ω_n + c_α t_n)) · P_β((c_α + ω_n)/2)
+// where P_β are the Lagrange basis on Chebyshev nodes.
 template<typename ComplexT>
 std::vector<std::vector<ComplexT>>
 build_qft_mpo_tensors(int r, int chi)
@@ -130,7 +134,7 @@ build_qft_mpo_tensors(int r, int chi)
 // ============================================================
 // build_mpo
 //   Assemble the MPO cores from the pre-computed W tensors
-//   into a TT object.
+//   into an MPO object.
 //
 //   Core layout (before boundary contraction):
 //       core[alpha, phys, beta]  with phys = wbit*2 + tbit
@@ -142,7 +146,7 @@ build_qft_mpo_tensors(int r, int chi)
 //   Overall normalisation 1 / 2^{r/2} is folded into core[0].
 // ============================================================
 template<typename ComplexT>
-TT<ComplexT> build_mpo(
+MPO<ComplexT> build_mpo(
     const std::vector<std::vector<ComplexT>>& W,
     int chi)
 {
@@ -198,18 +202,149 @@ TT<ComplexT> build_mpo(
     for (auto& x : cores[0].data)
         x /= norm;
 
-    return TT<ComplexT>(std::move(cores));
+    return MPO<ComplexT>(std::move(cores));
 }
 
 // ============================================================
 // build_qft_mpo_magic
-//   Convenience:  build W tensors, then assemble the TT MPO.
+//   Convenience:  build W tensors, then assemble the MPO.
 // ============================================================
 template<typename ComplexT>
-TT<ComplexT> build_qft_mpo_magic(int r, int chi)
+MPO<ComplexT> build_qft_mpo_magic(int r, int chi)
 {
     auto W = build_qft_mpo_tensors<ComplexT>(r, chi);
     return build_mpo<ComplexT>(W, chi);
+}
+
+// ============================================================
+// Helpers: real_pow (integer-exponent power), to_double
+// ============================================================
+inline double real_pow(double base, int exp) {
+    double r = 1.0;
+    for (int i = 0; i < exp; ++i) r *= base;
+    for (int i = 0; i > exp; --i) r /= base;
+    return r;
+}
+inline dd_128 real_pow(dd_128 base, int exp) {
+    dd_128 r(1.0);
+    for (int i = 0; i < exp; ++i) r *= base;
+    for (int i = 0; i > exp; --i) r /= base;
+    return r;
+}
+inline float128 real_pow(float128 base, int exp) {
+    float128 r(1.0);
+    for (int i = 0; i < exp; ++i) r *= base;
+    for (int i = 0; i > exp; --i) r /= base;
+    return r;
+}
+
+inline double to_double(double v)           { return v; }
+inline double to_double(dd_128 const& v)    { return v.x[0]; }
+inline double to_double(float128 const& v)  { return v.convert_to<double>(); }
+
+template<typename T>
+double to_double(std::complex<T> const& v) {
+    return std::abs(to_double(std::real(v)) + to_double(std::imag(v)));
+}
+
+// ============================================================
+// exact_qft_value
+//   Compute the exact QFT matrix element for a given pair of
+//   bit strings t_bits[0..r-1], w_bits[0..r-1].
+//
+//   F = 1/√(2^r) exp(-i 2π ω t / 2^r)
+//   with  t = Σ_{j=1..r} 2^{j-1} t_j    (t_1 = LSB)
+//         ω = Σ_{j=1..r} 2^{r-j} ω_j    (ω_1 = MSB)
+//
+//   To avoid large arguments in sin/cos (which the dd_real
+//   library cannot reduce modulo π/2), the integer product
+//   ω·t is computed exactly and reduced modulo 2^r *before*
+//   converting to floating point.
+// ============================================================
+template<typename ComplexT>
+ComplexT exact_qft_value(const std::vector<int>& t_bits,
+                         const std::vector<int>& w_bits)
+{
+    using Real = typename ComplexT::value_type;
+    int r = static_cast<int>(t_bits.size());
+    Real two = Real(2);
+
+    // Build integers t and ω as util::i128 (at r=30, each < 2^30)
+    util::i128 t_val = 0;
+    {
+        util::i128 pow2 = 1;
+        for (int j = 0; j < r; ++j) {
+            t_val += pow2 * static_cast<util::i128>(t_bits[j]);
+            pow2 *= 2;
+        }
+    }
+
+    util::i128 w_val = 0;
+    {
+        util::i128 pow2 = util::i128(1) << (r - 1);
+        for (int j = 0; j < r; ++j) {
+            w_val += pow2 * static_cast<util::i128>(w_bits[j]);
+            pow2 /= 2;
+        }
+    }
+
+    // Reduce modulo 2^r:  exp(-i·2π·k) = 1 for integer k
+    util::i128 two_pow_r   = util::i128(1) << r;
+    util::i128 reduced     = (w_val * t_val) & (two_pow_r - 1);
+
+    Real two_pow_r_r = real_pow(two, r);
+    Real reduced_r   = Real(static_cast<long long>(reduced));
+    Real phase = -Real(2) * pi<Real>() * reduced_r / two_pow_r_r;
+    Real norm  = Real(1) / real_sqrt(two_pow_r_r);
+
+    return ComplexT(norm * real_cos(phase), norm * real_sin(phase));
+}
+
+// ============================================================
+// compute_qft_mpo_error
+//   Sample n_samples random (t, ω) bit strings, compare the
+//   magic MPO against the exact QFT, and return {max_abs_err,
+//   l2_err, l2_exact_norm}.
+// ============================================================
+template<typename ComplexT>
+std::vector<double> compute_qft_mpo_error(
+    MPO<ComplexT>& mpo, int n_samples = 1000)
+{
+    int r = mpo.get_size();
+
+    std::mt19937 rng(std::random_device{}());
+    std::uniform_int_distribution<int> bit_dist(0, 1);
+
+    double max_abs_err = 0.0;
+    double sum_abs2_err = 0.0;
+    double sum_abs2_exact = 0.0;
+
+    for (int s = 0; s < n_samples; ++s) {
+        std::vector<int> t_bits(r), w_bits(r);
+        std::vector<int> phys_ids(r);
+        for (int k = 0; k < r; ++k) {
+            t_bits[k] = bit_dist(rng);
+            w_bits[k] = bit_dist(rng);
+            phys_ids[k] = w_bits[k] * 2 + t_bits[k];
+        }
+
+        ComplexT exact = exact_qft_value<ComplexT>(w_bits, t_bits);
+        ComplexT approx = mpo.eval(phys_ids);
+        ComplexT diff = approx - exact;
+
+        double abs_err = std::abs(std::complex<double>(
+            to_double(std::real(diff)), to_double(std::imag(diff))));
+        double abs_exact = std::abs(std::complex<double>(
+            to_double(std::real(exact)), to_double(std::imag(exact))));
+
+        if (abs_err > max_abs_err) max_abs_err = abs_err;
+        sum_abs2_err   += abs_err * abs_err;
+        sum_abs2_exact += abs_exact * abs_exact;
+    }
+
+    double l2_err   = std::sqrt(sum_abs2_err / n_samples);
+    double l2_exact = std::sqrt(sum_abs2_exact / n_samples);
+    return {max_abs_err, l2_err, l2_exact};
 }
 
 } // namespace magic_tensor_qft
