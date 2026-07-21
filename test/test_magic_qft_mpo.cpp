@@ -67,8 +67,8 @@ void test_build(const std::string& name, int r, int chi, int n_points = 10)
 }
 
 template<typename ComplexT>
-void test_error(const std::string& name, int r, int chi_max, int n_points = 1000){
-    for (int i=1; i<chi_max+1; i++){
+void test_error_range(const std::string& name, int r, int chi_max, int n_points = 1000){
+    for (int i=2; i<chi_max+1; i++){
         MPO<ComplexT> mpo = magic_tensor_qft::build_qft_mpo_magic<ComplexT>(r, i);
         auto err = magic_tensor_qft::compute_qft_mpo_error<ComplexT>(mpo, n_points);
         std::cout << name << " " << i <<"\n";
@@ -78,20 +78,47 @@ void test_error(const std::string& name, int r, int chi_max, int n_points = 1000
         std::cout << "    rms |F|        = " << err[2] << "\n";
         std::cout << "    relative rms   = " << err[1]/err[2] << "\n";
     }
+    std::cout <<"\n\n";
+}
+
+template<typename ComplexT>
+void test_error_single(const std::string& name, int r, int chi, int n_points = 1000){
+    MPO<ComplexT> mpo = magic_tensor_qft::build_qft_mpo_magic<ComplexT>(r, chi);
+    auto err = magic_tensor_qft::compute_qft_mpo_error<ComplexT>(mpo, n_points);
+    std::cout << name << " " << chi <<"\n";
+    std::cout << "  Error vs exact QFT (" << n_points << " samples):\n";
+    std::cout << "    max |MPO - F|  = " << err[0] << "\n";
+    std::cout << "    rms |MPO - F|  = " << err[1] << "\n";
+    std::cout << "    rms |F|        = " << err[2] << "\n";
+    std::cout << "    relative rms   = " << err[1]/err[2] << "\n";
+    std::cout <<"\n\n";
 }
 
 int main()
 {
     int r = 30;
+    int r1 = 55;
+    int r2 = 100;
     int chi = 12;
+    int chi_max = 40;
 
     test_build<std::complex<double>>("complex<double>", r, chi);
     test_build<Cdd_128>("Cdd_128", r, chi);
     test_build<Cfloat128>("Cfloat128", r, chi);
 
-    test_error<std::complex<double>>("complex<double>", r, 30);
-    test_error<Cdd_128>("Cdd_128", r, 30);
-    test_error<Cfloat128>("Cfloat128", r, 30);
+    test_error_range<std::complex<double>>("complex<double>", r, chi_max);
+    test_error_range<Cdd_128>("Cdd_128", r, chi_max);
+
+    test_error_range<std::complex<double>>("complex<double>", r1, chi_max);
+    test_error_range<Cdd_128>("Cdd_128", r1, chi_max);
+
+    test_error_range<std::complex<double>>("complex<double>", r2, chi_max);
+    test_error_range<Cdd_128>("Cdd_128", r2, chi_max);
+
+    test_error_single<Cfloat128>("Cfloat128", r, 37);
+    test_error_single<Cfloat128>("Cfloat128", r1, 37);
+    test_error_single<Cfloat128>("Cfloat128", r2, 37);
+
     std::cout << "\nAll tests passed!\n";
     return 0;
 }

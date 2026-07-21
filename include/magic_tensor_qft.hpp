@@ -41,10 +41,15 @@ template<> inline float128   pi<float128>()   { return boost::math::constants::p
 // ============================================================
 // chebyshev_nodes_on_01
 //   c_a = [1 - cos(pi a / (chi-1))] / 2,   a = 0..chi-1
+//   For chi <= 1 returns a single node at 0.5.
 // ============================================================
 template<typename Real>
 std::vector<Real> chebyshev_nodes_on_01(int chi) {
     std::vector<Real> nodes(chi);
+    if (chi <= 1) {
+        if (chi == 1) nodes[0] = Real(0.5);
+        return nodes;
+    }
     Real pi_val = pi<Real>();
     Real denom = Real(chi - 1);
     for (int a = 0; a < chi; ++a) {
@@ -248,6 +253,17 @@ double to_double(std::complex<T> const& v) {
 }
 
 // ============================================================
+// real_from_i128 — convert __int128 directly to Real, avoiding
+// the 64-bit truncation of long long.  Needed for r > 63.
+// ============================================================
+template<typename Real>
+Real real_from_i128(util::i128 x);
+
+template<> inline double   real_from_i128<double>(util::i128 x)   { return static_cast<double>(x); }
+template<> inline dd_128   real_from_i128<dd_128>(util::i128 x)   { return dd_128(x); }
+template<> inline float128 real_from_i128<float128>(util::i128 x) { return float128(x); }
+
+// ============================================================
 // exact_qft_value
 //   Compute the exact QFT matrix element for a given pair of
 //   bit strings t_bits[0..r-1], w_bits[0..r-1].
@@ -289,11 +305,16 @@ ComplexT exact_qft_value(const std::vector<int>& t_bits,
     }
 
     // Reduce modulo 2^r:  exp(-i·2π·k) = 1 for integer k
-    util::i128 two_pow_r   = util::i128(1) << r;
-    util::i128 reduced     = (w_val * t_val) & (two_pow_r - 1);
+    // Use unsigned i128 so multiplication wraps (mod 2^128),
+    // giving correct low bits for r ≤ 100.  Signed overflow
+    // would be UB for r > 63.
+    using u128 = unsigned __int128;
+    u128       two_pow_r_u = u128(1) << r;
+    u128       reduced_u   = (u128(w_val) * u128(t_val)) & (two_pow_r_u - 1);
+    util::i128 reduced     = static_cast<util::i128>(reduced_u);
 
     Real two_pow_r_r = real_pow(two, r);
-    Real reduced_r   = Real(static_cast<long long>(reduced));
+    Real reduced_r   = real_from_i128<Real>(reduced);
     Real phase = -Real(2) * pi<Real>() * reduced_r / two_pow_r_r;
     Real norm  = Real(1) / real_sqrt(two_pow_r_r);
 
