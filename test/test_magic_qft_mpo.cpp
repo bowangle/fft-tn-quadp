@@ -69,10 +69,17 @@ void test_build(const std::string& name, int r, int chi, int n_points = 10)
               << " chi=" << mpo2.get_chi() << "\n";
 }
 
+template<typename T>
+typename Eigen::NumTraits<typename Eigen::NumTraits<T>::Real>::Real default_tol()
+{
+    return Eigen::NumTraits<typename Eigen::NumTraits<T>::Real>::epsilon() * 100;
+}
+
 template<typename ComplexT>
 void test_error_range(const std::string& name, int r, int chi_max, int n_points = 1000){
-    // Create output directory
+    // Create output directories
     mkdir("test/output", 0755);
+    mkdir("test/output_compress", 0755);
 
     // Build filename: e.g. test/output/error_chi_max40_r30_complex_double.txt
     std::string safe_name = name;
@@ -83,13 +90,32 @@ void test_error_range(const std::string& name, int r, int chi_max, int n_points 
     fname << "test/output/error_chi_max" << chi_max << "_r" << r << "_" << safe_name << ".txt";
     std::ofstream out(fname.str());
 
+    // Compressed file in output_compress/
+    std::ostringstream fname_comp;
+    fname_comp << "test/output_compress/error_compress_chi_max" << chi_max << "_r" << r << "_" << safe_name << ".txt";
+    std::ofstream out_comp(fname_comp.str());
+
     std::cout << "Saving to " << fname.str() << "\n";
-    out << "# chi  max|MPO-F|  rms|MPO-F|  rms|F|  relative_rms\n";
+    std::cout << "Saving to " << fname_comp.str() << "\n";
+
+    // Determine nBit from a trial MPO to write header with column counts
+    {
+        MPO<ComplexT> mpo_tmp = magic_tensor_qft::build_qft_mpo_magic<ComplexT>(r, 2);
+        int nBit = mpo_tmp.get_size();
+        out << "# nBit=" << nBit << "  chi  max|MPO-F|  rms|MPO-F|  rms|F|  relative_rms  tot_nb_value  max_bond_dim"
+            << "  [list_chi(" << (nBit+1) << " values)]  [nb_value_core(" << nBit << " values)]\n";
+        out_comp << "# nBit=" << nBit << "  chi  max|MPO-F|  rms|MPO-F|  rms|F|  relative_rms  tot_nb_value  max_bond_dim"
+                 << "  [list_chi(" << (nBit+1) << " values)]  [nb_value_core(" << nBit << " values)]\n";
+    }
 
     for (int i=2; i<chi_max+1; i++){
         MPO<ComplexT> mpo = magic_tensor_qft::build_qft_mpo_magic<ComplexT>(r, i);
         auto err = magic_tensor_qft::compute_qft_mpo_error<ComplexT>(mpo, n_points);
         double rel_rms = err[1]/err[2];
+
+        auto list_chi = mpo.compute_list_chi();
+        auto nb_value_core = mpo.compute_nb_value_core();
+        auto tot_nb_value = mpo.compute_tot_nb_value();
 
         std::cout << name << " " << i <<"\n";
         std::cout << "  Error vs exact QFT (" << n_points << " samples):\n";
@@ -97,14 +123,40 @@ void test_error_range(const std::string& name, int r, int chi_max, int n_points 
         std::cout << "    rms |MPO - F|  = " << err[1] << "\n";
         std::cout << "    rms |F|        = " << err[2] << "\n";
         std::cout << "    relative rms   = " << rel_rms << "\n";
+        std::cout << "    tot_nb_value   = " << tot_nb_value << "\n";
 
-        out << i << " " << err[0] << " " << err[1] << " " << err[2] << " " << rel_rms << "\n";
+        int max_bd = *std::max_element(list_chi.begin(), list_chi.end());
+        out << i << " " << err[0] << " " << err[1] << " " << err[2] << " " << rel_rms << " " << tot_nb_value << " " << max_bd;
+        for (auto v : list_chi) out << " " << v;
+        for (auto v : nb_value_core) out << " " << v;
+        out << "\n";
 
-        // Here, use compress_svd on the mpo. Recompute all the error and record the bond dimension chi.
-        // Then save this new data in another folder.
+        // compress_svd and recompute
+        mpo.compress_svd(default_tol<ComplexT>(), -1);
+
+        auto err_comp = magic_tensor_qft::compute_qft_mpo_error<ComplexT>(mpo, n_points);
+        double rel_rms_comp = err_comp[1]/err_comp[2];
+
+        auto list_chi_comp = mpo.compute_list_chi();
+        auto nb_value_core_comp = mpo.compute_nb_value_core();
+        auto tot_nb_value_comp = mpo.compute_tot_nb_value();
+
+        std::cout << "  After compress_svd:\n";
+        std::cout << "    max |MPO - F|  = " << err_comp[0] << "\n";
+        std::cout << "    rms |MPO - F|  = " << err_comp[1] << "\n";
+        std::cout << "    rms |F|        = " << err_comp[2] << "\n";
+        std::cout << "    relative rms   = " << rel_rms_comp << "\n";
+        std::cout << "    tot_nb_value   = " << tot_nb_value_comp << "\n";
+
+        int max_bd_comp = *std::max_element(list_chi_comp.begin(), list_chi_comp.end());
+        out_comp << i << " " << err_comp[0] << " " << err_comp[1] << " " << err_comp[2] << " " << rel_rms_comp << " " << tot_nb_value_comp << " " << max_bd_comp;
+        for (auto v : list_chi_comp) out_comp << " " << v;
+        for (auto v : nb_value_core_comp) out_comp << " " << v;
+        out_comp << "\n";
     }
     std::cout <<"\n\n";
     out.close();
+    out_comp.close();
 }
 
 template<typename ComplexT>

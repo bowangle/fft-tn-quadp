@@ -2,4 +2,6 @@ build/
 
 # ignore test output
 test/test_*.txt
-test/output/error_*.txt
+test/output/
+test/output_compress/
+test/figure/
