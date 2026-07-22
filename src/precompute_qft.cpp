@@ -106,7 +106,7 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    const std::string path = "mpo_data/";
+    const std::string path = "mpo_data/data/";
 
     if (args.use_double){
         compute_and_save<std::complex<double>>(args, "Cdouble", path);

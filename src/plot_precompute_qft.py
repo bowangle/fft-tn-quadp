@@ -270,7 +270,7 @@ def plot_all(data_dir):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Plot precomputed QFT MPO info data")
-    parser.add_argument("--dir", default="mpo_data",
+    parser.add_argument("--dir", default="mpo_data/data",
                         help="Directory containing *_info.txt files")
     args = parser.parse_args()
 
