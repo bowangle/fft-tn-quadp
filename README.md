@@ -42,7 +42,7 @@ python src/plot_precompute_qft.py
 
 ## CLI Usage — `calc_MPO_QFT`
 
-```
+```bash
 Usage: calc_MPO_QFT [+double] [+float128] [+dd128] [+all]
                      [+compress|+C] [min_a=N] [max_a=N] [chi=N] [eps_factor=N]
 ```

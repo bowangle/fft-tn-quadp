@@ -368,4 +368,33 @@ std::vector<double> compute_qft_mpo_error(
     return {max_abs_err, l2_err, l2_exact};
 }
 
+// ============================================================
+// qft_type_label
+//   Maps ComplexT to the label string used in file names.
+// ============================================================
+template<typename> constexpr bool always_false = false;
+
+template<typename ComplexT>
+const char* qft_type_label() {
+    if constexpr (std::is_same_v<ComplexT, std::complex<double>>)  return "Cdouble";
+    else if constexpr (std::is_same_v<ComplexT, Cdd_128>)          return "Cdd128";
+    else if constexpr (std::is_same_v<ComplexT, Cfloat128>)        return "Cfloat128";
+    else static_assert(always_false<ComplexT>, "qft_type_label: unsupported ComplexT type — see template argument above");
+}
+
+// ============================================================
+// load_compressed_qft_mpo
+//   Load a precomputed compressed QFT MPO from disk.
+//   Files are expected at path/compress_QFT_nBit={nBit}_{type_label}.tt
+//   The type_label is deduced from ComplexT via qft_type_label.
+// ============================================================
+template<typename ComplexT>
+MPO<ComplexT> load_compressed_qft_mpo(
+    int nBit,
+    const std::string& path = "mpo_data/data/")
+{
+    std::string filename = path + "compress_QFT_nBit=" + std::to_string(nBit) + "_" + qft_type_label<ComplexT>() + ".tt";
+    return MPO<ComplexT>(filename, /*max_bond_dim_=*/0, /*reltol_=*/-1, /*w_=*/-1); // w_=-1 skip the intial QR. We saved it after a compression
+}
+
 } // namespace magic_tensor_qft
