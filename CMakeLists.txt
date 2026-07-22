@@ -61,3 +61,14 @@ foreach(_tgt IN LISTS TEST_TARGETS)
     target_link_libraries(${_tgt} PRIVATE project_deps)
     target_compile_options(${_tgt} PRIVATE -Wall -Wextra -Wreorder -Wshadow)
 endforeach()
+
+set(exec_TARGETS
+    calc_MPO_QFT
+)
+
+add_executable(calc_MPO_QFT src/precompute_qft.cpp)
+
+foreach(_tgt IN LISTS exec_TARGETS)
+    target_link_libraries(${_tgt} PRIVATE project_deps)
+    target_compile_options(${_tgt} PRIVATE -Wall -Wextra -Wreorder -Wshadow)
+endforeach()
