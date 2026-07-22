@@ -83,7 +83,7 @@ def load_info_file(fname):
 
 def plot_all(data_dir):
     """Find all info files and plot them."""
-    figure_dir = os.path.join(data_dir, "figure")
+    figure_dir = "mpo_data/figure"
     os.makedirs(figure_dir, exist_ok=True)
 
     pattern = os.path.join(data_dir, "*_info.txt")
