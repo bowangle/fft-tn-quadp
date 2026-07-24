@@ -1,59 +1,22 @@
 cmake_minimum_required(VERSION 3.16)
-project(TCIcpp LANGUAGES CXX)
+project(fft-tn-quadp LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-find_package(OpenMP REQUIRED)
+# ---- dependency: TensorQuadOperation manages itself (transitively everything) -
+add_subdirectory(extern/TensorQuadOperation EXCLUDE_FROM_ALL)
 
-# ---- paths ----------------------------------------------------------------------
-# rename for shorter path:
-set(TQO_DIR                 ${CMAKE_CURRENT_SOURCE_DIR}/extern/TensorQuadOperation)
-set(TCI_QUAD_DIR            ${TQO_DIR}/extern/tci_quad)
-set(QTGRID_DIR              ${TCI_QUAD_DIR}/extern/QTgrid-quad)
-set(NUMERIC_TYPE_DIR        ${QTGRID_DIR}/extern/numeric-type-quad)
-
-# include project:
+# ---- own paths ----------------------------------------------------------------
 set(PROJECT_INCLUDE_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/include)
-set(TYPING_INCLUDE_DIR      ${NUMERIC_TYPE_DIR}/include)
-set(TCI_QUAD_INCLUDE_DIR    ${TCI_QUAD_DIR}/include)
-set(TQO_INCLUDE_DIR         ${TQO_DIR}/include)
-set(QTGRID_INCLUDE_DIR      ${QTGRID_DIR}/include)
 
-# include dependance:
-set(EIGEN_INCLUDE_DIR       ${NUMERIC_TYPE_DIR}/extern/eigen)
-set(QD_INCLUDE_DIR          ${NUMERIC_TYPE_DIR}/extern/qd-install/include)
-set(QD_LIBRARY_DIR          ${NUMERIC_TYPE_DIR}/extern/qd-install/lib)
-
-set(JSON_INCLUDE_DIR        ${QTGRID_DIR}/extern/json/include)
-set(spdlog_INCLUDE_DIR      ${TCI_QUAD_DIR}/extern/spdlog/include)
-
-# ---- sanity check: QD must be built before configuring --------------------------
-if(NOT EXISTS ${QD_INCLUDE_DIR}/qd/qd_real.h)
-    message(FATAL_ERROR
-        "QD not found at ${QD_INCLUDE_DIR}.\n"
-        "Run install_extern.sh first to build the QD library.")
-endif()
-
-# ---- common dependency bundle ---------------------------------------------------
+# ---- our dependency bundle: TQO + our own headers -----------------------------
 add_library(project_deps INTERFACE)
+target_include_directories(project_deps INTERFACE ${PROJECT_INCLUDE_DIR})
+target_link_libraries(project_deps INTERFACE tensorquad_deps)
 
-target_include_directories(project_deps INTERFACE
-    ${PROJECT_INCLUDE_DIR}
-    ${TQO_INCLUDE_DIR}
-    ${QTGRID_INCLUDE_DIR}
-    ${EIGEN_INCLUDE_DIR}
-    ${QD_INCLUDE_DIR}
-    ${TCI_QUAD_INCLUDE_DIR}
-    ${JSON_INCLUDE_DIR}
-    ${spdlog_INCLUDE_DIR}
-    ${TYPING_INCLUDE_DIR}
-)
-target_link_directories(project_deps INTERFACE ${QD_LIBRARY_DIR})
-target_link_libraries(project_deps INTERFACE qd quadmath OpenMP::OpenMP_CXX)
-
-# ---- test targets ---------------------------------------------------------------
+# ---- test targets -------------------------------------------------------------
 set(TEST_TARGETS
     Test_qft_mpo
     Test_fft_vanilla
