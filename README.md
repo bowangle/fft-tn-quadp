@@ -11,11 +11,11 @@ Quad-precision QFT MPO precomputation using tensor networks.
 # 2. Compile (tests + executable)
 ./compile.sh
 
-# 3. Run tests
-./run_test.sh
+# 3. Precompute QFT MPOs
+./build/calc_MPO_QFT +double +dd128 +float128 +C max_a=60
 
-# 4. Precompute QFT MPOs
-./build/calc_MPO_QFT +double +dd128 +float128 +C max_a=127
+# 4. Run tests
+./run_test.sh
 
 # 5. Verify QFT MPO quality (plots)
 python src/plot_precompute_qft.py
@@ -29,9 +29,24 @@ python src/plot_precompute_qft.py
 
 - CMake ≥ 3.16
 - C++17 compiler (GCC or Clang)
-- OpenMP
 
-`install_extern.sh` fetches and builds all external dependencies (Eigen, QD, TensorQuadOperation, etc.) into `extern/`.
+`install_extern.sh` fetches and builds all external dependencies into `extern/`.
+
+```bash
+fft-tn-quadp
+└── TensorQuadOperation   MPS/MPO contractions & compression
+    └── tci_quad          tensor-cross interpolation
+        │                 + OpenMP  (propagates upward transitively)
+        │                 + spdlog
+        └── QTgrid-quad   grid discretization
+            │             + nlohmann/json
+            └── numeric-type-quad   extended-precision types
+                          + Eigen    linear algebra
+                          + QD       double-double & quad-double
+                          + Boost    float128 constants
+```
+
+Each level only knows its immediate child via `add_subdirectory()`.
 
 ## Build Targets
 
@@ -44,7 +59,7 @@ python src/plot_precompute_qft.py
 
 ```bash
 Usage: calc_MPO_QFT [+double] [+float128] [+dd128] [+all]
-                     [+compress|+C] [min_a=N] [max_a=N] [chi=N] [eps_factor=N]
+                     [+compress|+C] [min_a=N] [max_a=N] [chi=N] [eps_factor|ef=N]
 ```
 
 ### Type toggles (all off by default)
@@ -58,19 +73,19 @@ Usage: calc_MPO_QFT [+double] [+float128] [+dd128] [+all]
 
 ### Other flags
 
-| Flag              | Default | Description                                |
-|-------------------|---------|--------------------------------------------|
-| `+compress`, `+C` | off     | enable SVD compression                     |
-| `min_a=N`         | 10      | minimum number of bits                     |
-| `max_a=N`         | 100     | maximum number of bits                     |
-| `chi=N`           | 35      | bond dimension for MPO construction        |
-| `eps_factor=N`    | 2       | tolerance = 10^N × ε (used for compression)|
+| Flag              | Default | Description                              |
+|-------------------|---------|------------------------------------------|
+| `+compress`, `+C` | off     | enable SVD compression                   |
+| `min_a=N`         | 10      | minimum number of bits                   |
+| `max_a=N`         | 100     | maximum number of bits                   |
+| `chi=N`           | 35      | bond dimension for MPO construction      |
+| `eps_factor=N`, `ef=N` | 2 | tolerance = 10^N × ε (for compression)   |
 
 ### Examples
 
 ```bash
-# Precompute with all types, compression, up to 127 bits
-./build/calc_MPO_QFT +double +dd128 +float128 +C max_a=127
+# Precompute with all types, compression, up to 60 bits
+./build/calc_MPO_QFT +double +dd128 +float128 +C max_a=60
 
 # Quick run with just double, no compression, 10-30 bits
 ./build/calc_MPO_QFT +double min_a=10 max_a=30 chi=20
