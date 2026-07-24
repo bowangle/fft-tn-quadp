@@ -18,9 +18,9 @@ public:
         MPS<Cscalar> mps_,
         QTGrid<RealScalar, Sint> grid_,
         MPO<Cscalar> qft_mpo_,
-        RealScalar reltol_ = Eigen::NumTraits<RealScalar>::epsilon() * 100,
         int padding_bit_ = 0,
-        int max_chi_ = 200)
+        int max_chi_ = 200,
+        RealScalar reltol_ = Eigen::NumTraits<RealScalar>::epsilon() * 100)
     :
     mps(std::move(mps_)),
     grid(std::move(grid_)),
@@ -29,8 +29,7 @@ public:
     reltol(reltol_),
     max_chi(max_chi_)
     {
-        // update mps and grid by the one after applying the padding with padding bit
-        _add_one_slow_bit(mps, grid);
+        _add_n_padding(mps, grid, padding_bit);
     }
     
     // constructor where we provide path to file:
@@ -38,19 +37,18 @@ public:
     FFTmps(
         const std::string& prefix_mps,
         const std::string& folder_qft_data = "mpo_data/data/",
-        RealScalar reltol_ = Eigen::NumTraits<RealScalar>::epsilon() * 100,
         int padding_bit_ = 0,
-        int max_chi_ = 200)
+        int max_chi_ = 200,
+        RealScalar reltol_ = Eigen::NumTraits<RealScalar>::epsilon() * 100)
     :
-    mps(MPS<Cscalar>(prefix_mps + ".tt")),                                                              // load .tt to an mps
-    grid(QTGrid<RealScalar, Sint>(prefix_mps + "_grid_E.json")),                                          // load grid
-    QFT_E_T(magic_tensor_qft::load_compressed_qft_mpo<Cscalar>(mps.get_size() + padding_bit_, folder_qft_data)),  // load mpo
+    mps(MPS<Cscalar>(prefix_mps + ".tt", max_chi_, reltol_, /*w_=*/-1)),
+    grid(QTGrid<RealScalar, Sint>(prefix_mps + "_grid_E.json")),
+    QFT_E_T(magic_tensor_qft::load_compressed_qft_mpo<Cscalar>(mps.get_size() + padding_bit_, folder_qft_data, reltol_, max_chi_)),
     padding_bit(padding_bit_),
     reltol(reltol_),
     max_chi(max_chi_)
     {
-        // update mps and grid by the one after applying the padding with padding bit
-        _add_one_slow_bit(mps, grid);
+        _add_n_padding(mps, grid, padding_bit);
     }
 
     // --- reverse cores: swap left↔right on each core, then reverse order ---
@@ -89,6 +87,7 @@ public:
         // 5. Time-dependent phase: exp(-1j * t * a)
         RealScalar dt = RealScalar(2) * pi<RealScalar>() / (RealScalar(grid.get_N()) * grid.get_dx());
         auto mps_phase = _phase_mps_exp_1j_t_a(grid.get_nBits(), grid.get_a(), dt);
+        mps_phase = MPS<Cscalar>(mps_phase.get_core(), max_chi, reltol, mps_phase.get_w());
         auto phase_mpo = MPO<Cscalar>::from_mps(mps_phase);
         mps = phase_mpo._mul(mps);
 
@@ -99,6 +98,8 @@ public:
         // 7. Update grid to dual grid
         grid = grid.build_dual_grid(do_shift);
     }
+
+    Eigen::Index get_chi() const { return mps.get_chi(); }
 
 private:
     MPS<Cscalar> mps;
@@ -111,10 +112,9 @@ private:
     // --- padding -----------------------------------------------------------
     static void _add_one_slow_bit(MPS<Cscalar>& mps, QTGrid<RealScalar, Sint>& grid)
     {
-        auto cores = mps.get_core();                     // copy
+        auto cores = mps.get_core();
         Eigen::Index chi_right = cores.back().n_right;
-        Tensor3D<Cscalar> new_core(chi_right, 2, 1);     // zero-initialized
-        // |0> : pass through (identity on bond), |1> : zero (padding)
+        Tensor3D<Cscalar> new_core(chi_right, 2, 1);
         for (Eigen::Index r = 0; r < chi_right; ++r)
             new_core(r, 0, 0) = Cscalar(1, 0);
         cores.push_back(std::move(new_core));
@@ -144,9 +144,6 @@ private:
     }
 
     // --- phase MPS: exp(-1j * t_m * a) ------------------------------------
-    // t_m follows the FFT (two's complement) convention:
-    //   regular bits contribute +2^k, MSB contributes -2^{nBits-1}
-    // Cores are LSB-first (core 0 = bit 0), bond dimension 1.
     static MPS<Cscalar> _phase_mps_exp_1j_t_a(int nBits, RealScalar a, RealScalar dt)
     {
         std::vector<Tensor3D<Cscalar>> cores;
@@ -156,7 +153,7 @@ private:
         for (int k = 0; k < nBits; ++k) {
             RealScalar theta = theta_factor * pow2;
             pow2 *= RealScalar(2);
-            int sign = (k < nBits - 1) ? -1 : 1;   // MSB flips sign (two's complement)
+            int sign = (k < nBits - 1) ? -1 : 1;
             Tensor3D<Cscalar> core(1, 2, 1);
             core(0, 0, 0) = Cscalar(1, 0);
             core(0, 1, 0) = std::exp(Cscalar(0, (sign == 1) ? theta : -theta));

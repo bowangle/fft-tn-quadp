@@ -391,10 +391,13 @@ const char* qft_type_label() {
 template<typename ComplexT>
 MPO<ComplexT> load_compressed_qft_mpo(
     int nBit,
-    const std::string& path = "mpo_data/data/")
+    const std::string& path = "mpo_data/data/",
+    typename Eigen::NumTraits<ComplexT>::Real reltol_ = -1,
+    int max_bond_dim_ = 0
+)
 {
     std::string filename = path + "compress_QFT_nBit=" + std::to_string(nBit) + "_" + qft_type_label<ComplexT>() + ".tt";
-    return MPO<ComplexT>(filename, /*max_bond_dim_=*/0, /*reltol_=*/-1, /*w_=*/-1); // w_=-1 skip the intial QR. We saved it after a compression
+    return MPO<ComplexT>(filename, /*max_bond_dim_=*/max_bond_dim_, /*reltol_=*/reltol_, /*w_=*/-1); // w_=-1 skip the intial QR. We saved it after a compression
 }
 
 } // namespace magic_tensor_qft
