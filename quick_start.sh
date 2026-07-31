@@ -3,11 +3,11 @@ set -e
 
 # 1. Install external dependencies
 echo "==> Step 1: Installing external dependencies..."
-./install_extern.sh
+bash install_extern.sh
 
 # 2. Compile (tests + executable)
 echo "==> Step 2: Compiling..."
-./compile.sh
+bash compile.sh
 
 # 3. Precompute QFT MPOs
 echo "==> Step 3: Precomputing QFT MPOs..."

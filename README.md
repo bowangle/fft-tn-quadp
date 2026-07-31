@@ -32,7 +32,7 @@ python3 test/plot_errors_qft_mpo.py
 
 - CMake ≥ 3.21
 - C++20 compiler (GCC or Clang)
-- Python 3 with `matplotlib` and `numpy` (for plotting, steps 5 & 6)
+- Python 3 with `matplotlib` and `numpy` (for plotting, steps 3 & 4)
 - Boost (system-installed, found via `find_package`)
 
 `install_extern.sh` fetches and builds all external dependencies into `extern/`.
