@@ -1,42 +1,59 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.21)
 project(fft-tn-quadp LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+option(FFT_TN_BUILD_TESTS
+       "Build fft-tn-quadp's own tests"
+       ${PROJECT_IS_TOP_LEVEL})
+
 # ---- dependency: TensorQuadOperation manages itself (transitively everything) -
-add_subdirectory(extern/TensorQuadOperation EXCLUDE_FROM_ALL)
+# Its tests, and those of every layer below it, stay off unless the matching
+# <LAYER>_BUILD_TESTS option is explicitly set.
+if(NOT TARGET tensorquad_deps)
+    add_subdirectory(extern/TensorQuadOperation)
+endif()
 
 # ---- own paths ----------------------------------------------------------------
-set(PROJECT_INCLUDE_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/include)
+set(FFT_TN_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-# ---- our dependency bundle: TQO + our own headers -----------------------------
-add_library(project_deps INTERFACE)
-target_include_directories(project_deps INTERFACE ${PROJECT_INCLUDE_DIR})
-target_link_libraries(project_deps INTERFACE tensorquad_deps)
+# ---- interface target: carries our headers + transitive deps ------------------
+add_library(fft_tn_deps INTERFACE)
 
-# ---- test targets -------------------------------------------------------------
-set(TEST_TARGETS
-    Test_qft_mpo
-    Test_fft_vanilla
-)
+target_include_directories(fft_tn_deps INTERFACE
+    ${FFT_TN_INCLUDE_DIR})
 
-add_executable(Test_qft_mpo test/test_magic_qft_mpo.cpp)
-add_executable(Test_fft_vanilla test/test_fft_vanilla.cpp)
+target_compile_features(fft_tn_deps INTERFACE cxx_std_20)
 
-foreach(_tgt IN LISTS TEST_TARGETS)
-    target_link_libraries(${_tgt} PRIVATE project_deps)
-    target_compile_options(${_tgt} PRIVATE -Wall -Wextra -Wreorder -Wshadow)
+target_link_libraries(fft_tn_deps INTERFACE tensorquad_deps)
+
+# ---- executables (real deliverables: always built) ----------------------------
+# One entry per src/<name>.cpp -> target <name>
+set(_fft_tn_execs
+    precompute_qft)
+
+foreach(_name IN LISTS _fft_tn_execs)
+    add_executable(${_name} src/${_name}.cpp)
+    target_link_libraries(${_name} PRIVATE fft_tn_deps)
+    target_compile_options(${_name} PRIVATE
+        -Wall -Wextra -Wreorder -Wshadow)
 endforeach()
 
-set(exec_TARGETS
-    calc_MPO_QFT
-)
+# ---- tests (leaf targets: nothing may ever depend on these) -------------------
+if(FFT_TN_BUILD_TESTS)
+    enable_testing()
 
-add_executable(calc_MPO_QFT src/precompute_qft.cpp)
+    # One entry per test/test_<name>.cpp -> target fft_tn_test_<name>
+    set(_fft_tn_tests
+        magic_qft_mpo
+        fft_vanilla)
 
-foreach(_tgt IN LISTS exec_TARGETS)
-    target_link_libraries(${_tgt} PRIVATE project_deps)
-    target_compile_options(${_tgt} PRIVATE -Wall -Wextra -Wreorder -Wshadow)
-endforeach()
+    foreach(_name IN LISTS _fft_tn_tests)
+        add_executable(fft_tn_test_${_name} test/test_${_name}.cpp)
+        target_link_libraries(fft_tn_test_${_name} PRIVATE fft_tn_deps)
+        target_compile_options(fft_tn_test_${_name} PRIVATE
+            -Wall -Wextra -Wreorder -Wshadow -UNDEBUG)
+        add_test(NAME fft_tn_test_${_name}
+                 COMMAND fft_tn_test_${_name})
+    endforeach()
+endif()

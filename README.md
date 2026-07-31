@@ -12,38 +12,47 @@ Quad-precision QFT MPO precomputation using tensor networks.
 ./compile.sh
 
 # 3. Precompute QFT MPOs
-./build/calc_MPO_QFT +double +dd128 +float128 +C max_a=60
+./build/precompute_qft +double +dd128 +float128 +C max_a=127
+python3 src/plot_precompute_qft.py
 
 # 4. Run tests
 ./run_test.sh
+python3 test/plot_errors_qft_mpo.py
 
-# 5. Verify QFT MPO quality (plots)
-python src/plot_precompute_qft.py
-
-# Figures are saved to mpo_data/figure/:
-#   - precompute_qft_chi_err.*   : chi & relative error vs nBit
-#   - precompute_qft_timing.*    : t_construction & t_all vs nBit
+# Figures are saved after each script:
+#   src/plot_precompute_qft.py   → mpo_data/figure/:
+#     - precompute_qft_chi_err.*  : chi & relative error vs nBit
+#     - precompute_qft_timing.*   : t_construction & t_all vs nBit
+#   test/plot_errors_qft_mpo.py  → test/figure/:
+#     - errors_chi_max{...}.*     : rms & relative error vs chi
+#     - size_chi_max{...}.*       : tot_nb_value & relative error vs max bond dim
 ```
 
 ## Dependencies
 
-- CMake ≥ 3.16
-- C++17 compiler (GCC or Clang)
+- CMake ≥ 3.21
+- C++20 compiler (GCC or Clang)
+- Python 3 with `matplotlib` and `numpy` (for plotting, steps 5 & 6)
+- Boost (system-installed, found via `find_package`)
 
 `install_extern.sh` fetches and builds all external dependencies into `extern/`.
 
-```bash
+```
 fft-tn-quadp
-└── TensorQuadOperation   MPS/MPO contractions & compression
-    └── tci_quad          tensor-cross interpolation
-        │                 + OpenMP  (propagates upward transitively)
-        │                 + spdlog
-        └── QTgrid-quad   grid discretization
-            │             + nlohmann/json
-            └── numeric-type-quad   extended-precision types
-                          + Eigen    linear algebra
-                          + QD       double-double & quad-double
-                          + Boost    float128 constants
+└── TensorQuadOperation     MPS/MPO contractions & compression
+    + OpenMP
+    └── xfac_quad_runner    tensor-cross interpolation runner
+        + OpenMP
+        + spdlog (header-only)
+        └── xfac_quad       tensor-cross interpolation
+            + OpenMP
+            + Boost (headers)
+            └── QTgrid-quad  grid discretization
+                + nlohmann/json (header-only)
+                └── numeric-type-quad  extended-precision types
+                    + Eigen (header-only)
+                    + QD        double-double & quad-double
+                    + quadmath  (GCC only)
 ```
 
 Each level only knows its immediate child via `add_subdirectory()`.

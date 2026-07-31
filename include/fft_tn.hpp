@@ -99,7 +99,55 @@ public:
         grid = grid.build_dual_grid(do_shift);
     }
 
+    // --- inverse vanilla FFT (no trapezoid rule) ---
+    void ifft_vanilla(bool do_shift = true,
+                      RealScalar a = RealScalar(0))
+    {
+        // 1. Un-fftshift (self-inverse)
+        if (do_shift)
+            mps = _fft_shift(mps);
+
+        // 2. Inverse scaling using dual-grid values
+        //    Forward: * sqrt(N) * dx / (2π)
+        //    Inverse: * 2π / (sqrt(N) * dx_primal) = sqrt(N) * df
+        RealScalar N_dual  = RealScalar(grid.get_N());
+        RealScalar df      = grid.get_dx();
+        RealScalar dx_primal = RealScalar(2) * pi<RealScalar>() / (N_dual * df);
+        mps *= (RealScalar(2) * pi<RealScalar>())
+             / (magic_tensor_qft::real_sqrt(N_dual) * dx_primal);
+
+        // 3. Conjugate phase: exp(+1j * t * a)
+        RealScalar dt = RealScalar(2) * pi<RealScalar>() / (N_dual * dx_primal);
+        auto mps_phase = _phase_mps_exp_1j_t_a(grid.get_nBits(), a, -dt);
+        mps_phase = MPS<Cscalar>(mps_phase.get_core(), max_chi, reltol, mps_phase.get_w());
+        auto phase_mpo = MPO<Cscalar>::from_mps(mps_phase);
+        mps = phase_mpo._mul(mps);
+
+        // 4. Conjugate QFT MPO: QFT†
+        auto QFT_conj_cores = QFT_E_T.get_core();
+        for (auto& c : QFT_conj_cores)
+            for (auto& x : c.data)
+                x = Eigen::numext::conj(x);
+        MPO<Cscalar> QFT_conj(std::move(QFT_conj_cores),
+                              QFT_E_T.get_max_bond_dim(),
+                              QFT_E_T.get_reltol(),
+                              QFT_E_T.get_w());
+        mps = QFT_conj._mul(mps);
+
+        // 5. Un-reverse (reverse_cores is self-inverse)
+        mps = MPS<Cscalar>(reverse_cores(mps.get_core()),
+                           mps.get_max_bond_dim(),
+                           mps.get_reltol(),
+                           mps.get_w());
+
+        // 6. Recover primal grid (always centered=false)
+        grid = grid.build_dual_grid(false);
+    }
+
     Eigen::Index get_chi() const { return mps.get_chi(); }
+    MPS<Cscalar> const& get_mps() const { return mps; }
+    Cscalar eval(std::vector<int> const& bits) const { return mps.eval(bits); }
+    RealScalar get_a() const { return grid.get_a(); }
 
 private:
     MPS<Cscalar> mps;
