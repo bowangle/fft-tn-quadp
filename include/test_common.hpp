@@ -3,6 +3,8 @@
 #include <cmath>
 #include <complex>
 #include <functional>
+#include <limits>
+#include <stdexcept>
 #include <string_view>
 #include <vector>
 #include <string>
@@ -14,6 +16,8 @@
 #include <grid.h>
 #include <random>
 #include <filesystem>
+
+#include <unsupported/Eigen/FFT>
 
 #include "magic_tensor_qft.hpp"
 
@@ -190,6 +194,294 @@ const std::vector<FFTTestFunction<ComplexT>>& fft_test_functions()
 {
     static const auto functions = make_fft_test_functions<ComplexT>();
     return functions;
+}
+
+// Dense FFT reference for one test function. The frequency points follow the
+// same ordering as FFTmps::fft_vanilla(): centered when do_shift is true and
+// non-negative when it is false.
+template <typename ComplexT>
+struct FFTReference {
+    using Real = typename Eigen::NumTraits<ComplexT>::Real;
+
+    std::size_t N;
+    std::vector<Real> points;
+    std::vector<ComplexT> values;
+};
+
+template <typename ComplexT>
+FFTReference<ComplexT> compute_reference_fft(
+    const FFTTestFunction<ComplexT>& function,
+    std::size_t N,
+    bool do_shift = true)
+{
+    using Real = typename Eigen::NumTraits<ComplexT>::Real;
+
+    if (N == 0 || (N & (N - 1)) != 0)
+        throw std::invalid_argument("compute_reference_fft: N must be a power of two");
+
+    const Real dE = (function.b_E - function.a_E) / Real(N);
+    const Real dt = Real(2) * magic_tensor_qft::pi<Real>() / (Real(N) * dE);
+    const Real scale = dE / (Real(2) * magic_tensor_qft::pi<Real>());
+
+    std::vector<ComplexT> samples(N);
+    for (std::size_t j = 0; j < N; ++j)
+        samples[j] = function(function.a_E + Real(j) * dE);
+
+    Eigen::FFT<Real> fft;
+    std::vector<ComplexT> spectrum;
+    fft.fwd(spectrum, samples);
+
+    FFTReference<ComplexT> reference{N, std::vector<Real>(N), std::vector<ComplexT>(N)};
+    for (std::size_t m = 0; m < N; ++m) {
+        const std::size_t k = do_shift
+            ? ((m < N / 2) ? m + N / 2 : m - N / 2)
+            : m;
+        const Real frequency_index = do_shift
+            ? Real(m) - Real(N / 2)
+            : Real(m);
+        const Real point = frequency_index * dt;
+
+        reference.points[m] = point;
+        reference.values[m] = scale
+                            * std::exp(ComplexT(Real(0), -function.a_E * point))
+                            * spectrum[k];
+    }
+
+    return reference;
+}
+
+template <typename ComplexT>
+FFTReference<ComplexT> compute_trapezoid_reference_fft(
+    const FFTTestFunction<ComplexT>& function,
+    std::size_t N,
+    bool do_shift = true)
+{
+    FFTTestFunction<ComplexT> corrected = function;
+    const ComplexT f_a = function(function.a_E);
+    const ComplexT f_b = function(function.b_E);
+    corrected.function = [function, f_a, f_b](auto x) {
+        if (x == function.a_E)
+            return (f_a + f_b) / ComplexT(2, 0);
+        return function(x);
+    };
+    return compute_reference_fft(corrected, N, do_shift);
+}
+
+// Compare every value of a dense FFT reference with the corresponding MPS
+// entry. MPS/QTGrid bit strings are LSB-first.
+template <typename ComplexT>
+TTErrorOnGrid<typename Eigen::NumTraits<ComplexT>::Real>
+error_reference_fft_mps(
+    const FFTReference<ComplexT>& reference,
+    const MPS<ComplexT>& mps)
+{
+    using Real = typename Eigen::NumTraits<ComplexT>::Real;
+
+    if (reference.values.size() != reference.N ||
+        reference.points.size() != reference.N)
+        throw std::invalid_argument("error_reference_fft_mps: inconsistent reference sizes");
+
+    const std::size_t nBit = mps.get_core().size();
+    if (nBit >= std::numeric_limits<std::size_t>::digits ||
+        (std::size_t(1) << nBit) != reference.N)
+        throw std::invalid_argument("error_reference_fft_mps: MPS size does not match reference N");
+
+    std::vector<std::vector<int>> ids(reference.N, std::vector<int>(nBit));
+    for (std::size_t i = 0; i < reference.N; ++i)
+        for (std::size_t bit = 0; bit < nBit; ++bit)
+            ids[i][bit] = int((i >> bit) & std::size_t(1));
+
+    const std::vector<ComplexT> mps_values = mps.eval_list(ids);
+
+    TTErrorOnGrid<Real> out;
+    out.real_abs.resize(reference.N);
+    out.real_rel.resize(reference.N);
+    out.imag_abs.resize(reference.N);
+    out.imag_rel.resize(reference.N);
+    out.abs_abs.resize(reference.N);
+    out.abs_rel.resize(reference.N);
+
+    for (std::size_t i = 0; i < reference.N; ++i) {
+        const ComplexT diff = reference.values[i] - mps_values[i];
+        const Real ref_norm = std::abs(reference.values[i]);
+
+        out.real_abs[i] = diff.real();
+        out.imag_abs[i] = diff.imag();
+        out.abs_abs[i] = std::abs(diff);
+
+        if (ref_norm != Real(0)) {
+            out.real_rel[i] = diff.real() / ref_norm;
+            out.imag_rel[i] = diff.imag() / ref_norm;
+            out.abs_rel[i] = out.abs_abs[i] / ref_norm;
+        } else {
+            out.real_rel[i] = Real(0);
+            out.imag_rel[i] = Real(0);
+            out.abs_rel[i] = Real(0);
+        }
+    }
+
+    out.l_point = reference.points;
+    out.l_ref = reference.values;
+    out.l_tt = mps_values;
+    out.compute_summary();
+    return out;
+}
+
+// Reference values for selected outputs of a zero-padded FFT. N is the
+// padded size, while indices contains only the output entries to compare.
+template <typename ComplexT>
+struct SampledFFTReference {
+    using Real = typename Eigen::NumTraits<ComplexT>::Real;
+
+    std::size_t N;
+    std::vector<std::size_t> indices;
+    std::vector<Real> points;
+    std::vector<ComplexT> values;
+};
+
+template <typename ComplexT>
+SampledFFTReference<ComplexT> compute_sampled_padded_reference_fft(
+    const FFTTestFunction<ComplexT>& function,
+    std::size_t original_N,
+    int padding_bit,
+    const std::vector<std::size_t>& indices,
+    bool do_shift = true,
+    bool use_trapezoid = false)
+{
+    using Real = typename Eigen::NumTraits<ComplexT>::Real;
+
+    if (original_N == 0 || (original_N & (original_N - 1)) != 0)
+        throw std::invalid_argument(
+            "compute_sampled_padded_reference_fft: original_N must be a power of two");
+    if (padding_bit < 0 ||
+        padding_bit >= std::numeric_limits<std::size_t>::digits ||
+        original_N > (std::numeric_limits<std::size_t>::max() >> padding_bit))
+        throw std::invalid_argument(
+            "compute_sampled_padded_reference_fft: padded size overflows size_t");
+
+    const std::size_t padded_N = original_N << padding_bit;
+    const Real dE = (function.b_E - function.a_E) / Real(original_N);
+    const Real dt = Real(2) * magic_tensor_qft::pi<Real>()
+                  / (Real(padded_N) * dE);
+    const Real scale = dE / (Real(2) * magic_tensor_qft::pi<Real>());
+
+    const bool padded_trapezoid = use_trapezoid && padding_bit > 0;
+    std::vector<ComplexT> samples(original_N + (padded_trapezoid ? 1 : 0));
+    for (std::size_t j = 0; j < original_N; ++j)
+        samples[j] = function(function.a_E + Real(j) * dE);
+
+    if (use_trapezoid) {
+        if (padding_bit == 0) {
+            samples[0] = (samples[0] + function(function.b_E))
+                       / ComplexT(2, 0);
+        } else {
+            samples[0] /= ComplexT(2, 0);
+            samples[original_N] = function(function.b_E) / ComplexT(2, 0);
+        }
+    }
+
+    SampledFFTReference<ComplexT> reference{
+        padded_N,
+        indices,
+        std::vector<Real>(indices.size()),
+        std::vector<ComplexT>(indices.size())
+    };
+
+    for (std::size_t i = 0; i < indices.size(); ++i) {
+        const std::size_t m = indices[i];
+        if (m >= padded_N)
+            throw std::out_of_range(
+                "compute_sampled_padded_reference_fft: output index is outside padded FFT");
+
+        const std::size_t k = do_shift
+            ? ((m < padded_N / 2) ? m + padded_N / 2 : m - padded_N / 2)
+            : m;
+        const Real frequency_index = do_shift
+            ? Real(m) - Real(padded_N / 2)
+            : Real(m);
+        const Real point = frequency_index * dt;
+
+        const Real angle = -Real(2) * magic_tensor_qft::pi<Real>()
+                         * Real(k) / Real(padded_N);
+        const ComplexT phase_step = std::exp(ComplexT(Real(0), angle));
+        ComplexT phase(Real(1), Real(0));
+        ComplexT spectrum(Real(0), Real(0));
+        for (const ComplexT& sample : samples) {
+            spectrum += sample * phase;
+            phase *= phase_step;
+        }
+
+        reference.points[i] = point;
+        reference.values[i] = scale
+                            * std::exp(ComplexT(Real(0), -function.a_E * point))
+                            * spectrum;
+    }
+
+    return reference;
+}
+
+template <typename ComplexT>
+TTErrorOnGrid<typename Eigen::NumTraits<ComplexT>::Real>
+error_sampled_reference_fft_mps(
+    const SampledFFTReference<ComplexT>& reference,
+    const MPS<ComplexT>& mps)
+{
+    using Real = typename Eigen::NumTraits<ComplexT>::Real;
+
+    const std::size_t count = reference.indices.size();
+    if (reference.values.size() != count || reference.points.size() != count)
+        throw std::invalid_argument(
+            "error_sampled_reference_fft_mps: inconsistent reference sizes");
+
+    const std::size_t nBit = mps.get_core().size();
+    if (nBit >= std::numeric_limits<std::size_t>::digits ||
+        (std::size_t(1) << nBit) != reference.N)
+        throw std::invalid_argument(
+            "error_sampled_reference_fft_mps: MPS size does not match reference N");
+
+    std::vector<std::vector<int>> ids(count, std::vector<int>(nBit));
+    for (std::size_t i = 0; i < count; ++i) {
+        if (reference.indices[i] >= reference.N)
+            throw std::out_of_range(
+                "error_sampled_reference_fft_mps: output index is outside reference FFT");
+        for (std::size_t bit = 0; bit < nBit; ++bit)
+            ids[i][bit] = int((reference.indices[i] >> bit) & std::size_t(1));
+    }
+
+    const std::vector<ComplexT> mps_values = mps.eval_list(ids);
+
+    TTErrorOnGrid<Real> out;
+    out.real_abs.resize(count);
+    out.real_rel.resize(count);
+    out.imag_abs.resize(count);
+    out.imag_rel.resize(count);
+    out.abs_abs.resize(count);
+    out.abs_rel.resize(count);
+
+    for (std::size_t i = 0; i < count; ++i) {
+        const ComplexT diff = reference.values[i] - mps_values[i];
+        const Real ref_norm = std::abs(reference.values[i]);
+
+        out.real_abs[i] = diff.real();
+        out.imag_abs[i] = diff.imag();
+        out.abs_abs[i] = std::abs(diff);
+
+        if (ref_norm != Real(0)) {
+            out.real_rel[i] = diff.real() / ref_norm;
+            out.imag_rel[i] = diff.imag() / ref_norm;
+            out.abs_rel[i] = out.abs_abs[i] / ref_norm;
+        } else {
+            out.real_rel[i] = Real(0);
+            out.imag_rel[i] = Real(0);
+            out.abs_rel[i] = Real(0);
+        }
+    }
+
+    out.l_point = reference.points;
+    out.l_ref = reference.values;
+    out.l_tt = mps_values;
+    out.compute_summary();
+    return out;
 }
 
 template <typename ComplexT, typename Sint>

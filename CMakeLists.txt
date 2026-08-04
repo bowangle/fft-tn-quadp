@@ -41,6 +41,20 @@ endforeach()
 
 # ---- tests (leaf targets: nothing may ever depend on these) -------------------
 if(FFT_TN_BUILD_TESTS)
+    set(FFT_TN_CATCH2_INCLUDE_DIR
+        ${CMAKE_CURRENT_SOURCE_DIR}/extern/Catch2/single_include)
+
+    if(NOT EXISTS ${FFT_TN_CATCH2_INCLUDE_DIR}/catch2/catch.hpp)
+        message(FATAL_ERROR
+            "Catch2 not found at ${FFT_TN_CATCH2_INCLUDE_DIR}.\n"
+            "Run: git submodule update --init --recursive")
+    endif()
+
+    # Test-only interface: Catch2 must not propagate through fft_tn_deps.
+    add_library(fft_tn_testing INTERFACE)
+    target_include_directories(fft_tn_testing SYSTEM INTERFACE
+        ${FFT_TN_CATCH2_INCLUDE_DIR})
+
     enable_testing()
 
     # One entry per test/test_<name>.cpp -> target fft_tn_test_<name>
@@ -53,7 +67,9 @@ if(FFT_TN_BUILD_TESTS)
 
     foreach(_name IN LISTS _fft_tn_tests)
         add_executable(fft_tn_test_${_name} test/test_${_name}.cpp)
-        target_link_libraries(fft_tn_test_${_name} PRIVATE fft_tn_deps)
+        target_link_libraries(fft_tn_test_${_name} PRIVATE
+            fft_tn_deps
+            fft_tn_testing)
         target_compile_options(fft_tn_test_${_name} PRIVATE
             -Wall -Wextra -Wreorder -Wshadow -UNDEBUG)
         add_test(NAME fft_tn_test_${_name}
