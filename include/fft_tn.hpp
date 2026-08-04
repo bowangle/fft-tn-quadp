@@ -71,13 +71,14 @@ public:
 
     // --- vanilla FFT (no trapezoid rule) ---
     // WARNING TODO later
-    void fft_vanilla(bool do_shift = true)
+    void fft_vanilla(bool do_shift = true,
+                     const std::string& method = "zip-up")
     {
         // 1. Reverse cores for endian consistency with the QFT MPO
         mps = MPS<Cscalar>(reverse_cores(mps.get_core()), mps.get_max_bond_dim(), mps.get_reltol(), mps.get_w());
 
         // 2. Apply QFT MPO
-        mps = QFT_E_T._mul(mps);
+        mps = QFT_E_T._mul(mps, method);
 
         // 3. Normalisation: *√N
         mps *= magic_tensor_qft::real_sqrt(RealScalar(grid.get_N()));
@@ -90,7 +91,7 @@ public:
         auto mps_phase = _phase_mps_exp_1j_t_a(grid.get_nBits(), grid.get_a(), dt);
         mps_phase = MPS<Cscalar>(mps_phase.get_core(), max_chi, reltol, mps_phase.get_w());
         auto phase_mpo = MPO<Cscalar>::from_mps(mps_phase);
-        mps = phase_mpo._mul(mps);
+        mps = phase_mpo._mul(mps, method);
 
         // 6. Optional fftshift
         if (do_shift)
@@ -102,7 +103,7 @@ public:
 
     // --- trapezoid FFT (with trapezoid rule) ---
     // WARNING TODO to test, both case padding_bit=0 and padding_bit>0, with the three method.
-    void fft_trapez(Cscalar f_b, bool do_shift = true, const std::string &method = "optimize")
+    void fft_trapez(Cscalar f_b, bool do_shift = true, const std::string &method = "zip-up")
     {
         // 1. Reverse cores for endian consistency with the QFT MPO
         mps = MPS<Cscalar>(reverse_cores(mps.get_core()), mps.get_max_bond_dim(), mps.get_reltol(), mps.get_w());
@@ -152,7 +153,8 @@ public:
     void fft_discontinuous_with_loop(const std::vector<RealScalar> &l_disc,
                         const std::vector<Cscalar>    &l_f_disc,
                         Cscalar f_b,
-                        bool do_shift = true)
+                        bool do_shift = true,
+                        const std::string& method = "zip-up")
     {
         if (l_disc.size() != l_f_disc.size())
             throw std::invalid_argument("l_disc and l_f_disc must have equal length");
@@ -170,7 +172,8 @@ public:
         for (size_t j = 0; j < l_disc.size(); ++j) {
             RealScalar q = (l_disc[j] - a) / dx;
             long long  i = llround(q);
-            if (std::abs(q - RealScalar(i)) > RealScalar(1e-9))
+            using std::abs;
+            if (abs(q - RealScalar(i)) > RealScalar(1e-9))
                 throw std::invalid_argument("discontinuity not on a grid point");
             if (i <= 0 || i >= N_orig)
                 throw std::invalid_argument("discontinuity outside (a, b)");
@@ -196,7 +199,7 @@ public:
 
             // --- restrict to [L, U) ---
             auto ind = _mps_indicator_interval(nB, L, U, !first, !last, max_chi, reltol);
-            MPS<Cscalar> part = MPO<Cscalar>::from_mps(ind)._mul(g);
+            MPS<Cscalar> part = MPO<Cscalar>::from_mps(ind)._mul(g, method);
 
             // --- left endpoint: halve the value at L ---
             std::vector<int> L_bits = bits_of(L);
@@ -221,14 +224,14 @@ public:
         mps = mps_out;
 
         // --- 3..8: identical to fft_vanilla from here ---
-        mps = QFT_E_T._mul(mps);
+        mps = QFT_E_T._mul(mps, method);
         mps *= magic_tensor_qft::real_sqrt(RealScalar(grid.get_N()));
         mps *= grid.get_dx() / (RealScalar(2) * pi<RealScalar>());
         RealScalar dt = RealScalar(2) * pi<RealScalar>()
                     / (RealScalar(grid.get_N()) * grid.get_dx());
         auto mps_phase = _phase_mps_exp_1j_t_a(grid.get_nBits(), grid.get_a(), dt);
         mps_phase = MPS<Cscalar>(mps_phase.get_core(), max_chi, reltol, mps_phase.get_w());
-        mps = MPO<Cscalar>::from_mps(mps_phase)._mul(mps);
+        mps = MPO<Cscalar>::from_mps(mps_phase)._mul(mps, method);
         if (do_shift) mps = _fft_shift(mps);
         grid = grid.build_dual_grid(do_shift);
     }
@@ -252,7 +255,8 @@ public:
     void fft_discontinuous_loopless(const std::vector<RealScalar> &l_disc,
                         const std::vector<Cscalar>    &l_f_disc,
                         Cscalar f_b,
-                        bool do_shift = true)
+                        bool do_shift = true,
+                        const std::string& method = "zip-up")
     {
         if (l_disc.size() != l_f_disc.size())
             throw std::invalid_argument("l_disc and l_f_disc must have equal length");
@@ -282,7 +286,8 @@ public:
             for (size_t j = 0; j < l_disc.size(); ++j) {
                 RealScalar q = (l_disc[j] - a) / dx;
                 long long  i = llround(q);
-                if (std::abs(q - RealScalar(i)) > RealScalar(1e-9))
+                using std::abs;
+                if (abs(q - RealScalar(i)) > RealScalar(1e-9))
                     throw std::invalid_argument("discontinuity not on a grid point");
                 if (i <= 0 || i >= N_orig)
                     throw std::invalid_argument("discontinuity outside (a, b)");
@@ -316,7 +321,7 @@ public:
         }
 
         // 3. Apply QFT MPO
-        mps = QFT_E_T._mul(mps);
+        mps = QFT_E_T._mul(mps, method);
 
         // 4. Normalisation: *sqrt(N)
         mps *= magic_tensor_qft::real_sqrt(RealScalar(grid.get_N()));
@@ -329,7 +334,7 @@ public:
                     / (RealScalar(grid.get_N()) * grid.get_dx());
         auto mps_phase = _phase_mps_exp_1j_t_a(grid.get_nBits(), grid.get_a(), dt);
         mps_phase = MPS<Cscalar>(mps_phase.get_core(), max_chi, reltol, mps_phase.get_w());
-        mps = MPO<Cscalar>::from_mps(mps_phase)._mul(mps);
+        mps = MPO<Cscalar>::from_mps(mps_phase)._mul(mps, method);
 
         // 7. Optional fftshift
         if (do_shift)

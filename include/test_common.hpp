@@ -1,14 +1,19 @@
 #pragma once
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <complex>
 #include <functional>
+#include <iomanip>
 #include <limits>
+#include <map>
 #include <stdexcept>
 #include <string_view>
 #include <vector>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <sstream>
 #include <fstream>
 
@@ -22,6 +27,36 @@
 #include "magic_tensor_qft.hpp"
 
 namespace fft_tn_test {
+
+struct MPOMPSMethodTiming {
+    double total_seconds = 0;
+    std::size_t case_count = 0;
+};
+
+inline std::map<std::string, MPOMPSMethodTiming>& mpo_mps_method_timings()
+{
+    static std::map<std::string, MPOMPSMethodTiming> timings;
+    return timings;
+}
+
+inline std::size_t next_fft_case_index()
+{
+    static std::size_t completed_cases = 0;
+    return ++completed_cases;
+}
+
+template <typename Function>
+void time_mpo_mps_case(const std::string& method, Function&& function)
+{
+    const auto start = std::chrono::steady_clock::now();
+    std::forward<Function>(function)();
+    const auto stop = std::chrono::steady_clock::now();
+    const double seconds = std::chrono::duration<double>(stop - start).count();
+
+    auto& timing = mpo_mps_method_timings()[method];
+    timing.total_seconds += seconds;
+    ++timing.case_count;
+}
 
 // One entry from the function battery used by the FFT tests.  Real is the
 // coordinate type (double, dd_128 or float128); the function is complex-valued
@@ -65,6 +100,13 @@ Real abs_value(const Real& x)
 {
     using std::abs;
     return abs(x);
+}
+
+template <typename Real>
+util::i128 round_to_i128(const Real& x)
+{
+    using std::llround;
+    return static_cast<util::i128>(llround(x));
 }
 
 } // namespace detail
@@ -288,9 +330,9 @@ FFTReference<ComplexT> compute_discontinuous_reference_fft(
     const Real dE = (function.b_E - function.a_E) / Real(N);
     for (const Real point : discontinuities) {
         const Real q = (point - function.a_E) / dE;
-        const long long index = std::llround(q);
-        if (std::abs(q - Real(index)) > Real(1e-9) ||
-            index <= 0 || static_cast<std::size_t>(index) >= N)
+        const util::i128 index = detail::round_to_i128(q);
+        if (detail::abs_value(q - Real(index)) > Real(1e-9) ||
+            index <= 0 || index >= util::i128(N))
             throw std::invalid_argument(
                 "compute_discontinuous_reference_fft: discontinuity is not an interior grid point");
     }
@@ -432,10 +474,9 @@ SampledFFTReference<ComplexT> compute_sampled_padded_reference_fft(
             "compute_sampled_padded_reference_fft: inconsistent discontinuity sizes");
     for (std::size_t i = 0; i < discontinuities.size(); ++i) {
         const Real q = (discontinuities[i] - function.a_E) / dE;
-        const long long signed_index = std::llround(q);
-        if (std::abs(q - Real(signed_index)) > Real(1e-9) ||
-            signed_index <= 0 ||
-            static_cast<std::size_t>(signed_index) >= original_N)
+        const util::i128 signed_index = detail::round_to_i128(q);
+        if (detail::abs_value(q - Real(signed_index)) > Real(1e-9) ||
+            signed_index <= 0 || signed_index >= util::i128(original_N))
             throw std::invalid_argument(
                 "compute_sampled_padded_reference_fft: discontinuity is not an interior grid point");
         const std::size_t index = static_cast<std::size_t>(signed_index);
@@ -567,9 +608,11 @@ void tci_function_for_test(
 
     // ---- 10 random additional pivots with fixed seed ----
     std::mt19937 rng(42);
-    std::uniform_real_distribution<RealT> dist(function_1.a_E, function_1.b_E);
     std::vector<RealT> additional_pivot(10);
-    for (auto& p : additional_pivot) p = dist(rng);
+    for (auto& p : additional_pivot) {
+        const RealT unit = RealT(rng()) / RealT(std::mt19937::max());
+        p = function_1.a_E + unit * (function_1.b_E - function_1.a_E);
+    }
 
     // ---- a non-default pivot1, to verify propagation ----
     std::vector<int> pivot1_custom = grid.coord_to_id(RealT(0.0));
@@ -777,3 +820,97 @@ void verify_loaded_data(
 
 
 } // namespace fft_tn_test
+
+// Catch2 reports each failed assertion where it occurs, but its final summary
+// only contains aggregate counts. Record the active section path for each
+// failure and print a compact recap at the end of the run.
+class FFTFailureSummaryListener : public Catch::TestEventListenerBase {
+public:
+    using Catch::TestEventListenerBase::TestEventListenerBase;
+
+    bool assertionEnded(const Catch::AssertionStats& assertion_stats) override
+    {
+        if (!assertion_stats.assertionResult.isOk()) {
+            std::ostringstream path;
+            // The first entry is the TEST_CASE itself; the nested entries carry
+            // the function, padding mode, and FFT implementation names.
+            const std::size_t first = m_sectionStack.size() > 1 ? 1 : 0;
+            for (std::size_t i = first; i < m_sectionStack.size(); ++i) {
+                if (i != first)
+                    path << " / ";
+                path << m_sectionStack[i].name;
+            }
+
+            const std::string failure_path = path.str();
+            if (!failure_path.empty()) {
+                const auto duplicate = std::find_if(
+                    failures.begin(), failures.end(),
+                    [&](const Failure& failure) {
+                        return failure.path == failure_path;
+                    });
+                if (duplicate == failures.end()) {
+                    std::string expression;
+                    constexpr std::string_view recap_prefix = "FFT_RECAP ";
+                    for (const auto& message : assertion_stats.infoMessages) {
+                        if (message.message.compare(
+                                0, recap_prefix.size(), recap_prefix) == 0) {
+                            expression = message.message.substr(
+                                recap_prefix.size());
+                            break;
+                        }
+                    }
+                    if (expression.empty())
+                        expression = assertion_stats.assertionResult
+                                         .getExpandedExpression();
+                    if (expression.empty())
+                        expression = assertion_stats.assertionResult.getMessage();
+                    failures.push_back({failure_path, std::move(expression)});
+                }
+            }
+        }
+        return false;
+    }
+
+    void testRunEnded(const Catch::TestRunStats& test_run_stats) override
+    {
+        if (!failures.empty()) {
+            stream << "\n================ FAILED FFT SECTION RECAP ================\n";
+            for (const auto& failure : failures) {
+                stream << "  - " << failure.path << '\n';
+                if (!failure.expression.empty())
+                    stream << "    error/tolerance: " << failure.expression << '\n';
+            }
+            stream << "==========================================================\n";
+        }
+
+        const auto& timings = fft_tn_test::mpo_mps_method_timings();
+        if (!timings.empty()) {
+            const auto old_flags = stream.flags();
+            const auto old_precision = stream.precision();
+            stream << "\n================ MPO-MPS METHOD TIMING RECAP ==============\n"
+                   << std::fixed << std::setprecision(6);
+            for (const auto& [method, timing] : timings) {
+                const double average = timing.total_seconds
+                                     / static_cast<double>(timing.case_count);
+                stream << "  - " << method
+                       << ": cases=" << timing.case_count
+                       << ", average=" << average << " s"
+                       << ", total=" << timing.total_seconds << " s\n";
+            }
+            stream << "==========================================================\n";
+            stream.flags(old_flags);
+            stream.precision(old_precision);
+        }
+        Catch::TestEventListenerBase::testRunEnded(test_run_stats);
+    }
+
+private:
+    struct Failure {
+        std::string path;
+        std::string expression;
+    };
+
+    std::vector<Failure> failures;
+};
+
+CATCH_REGISTER_LISTENER(FFTFailureSummaryListener)

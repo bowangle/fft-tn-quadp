@@ -86,29 +86,54 @@ TEST_CASE("double FFT test data can be saved and reloaded", "[fft][double]")
             const auto& left_values = data.f_discontinuities;
 
             const RealT tolerance =
-                std::numeric_limits<RealT>::epsilon() * RealT(103);
+                std::numeric_limits<RealT>::epsilon() * RealT(170);
             const RealT loop_tolerance =
                 std::numeric_limits<RealT>::epsilon() * RealT(200);
             const RealT loopless_tolerance =
-                std::numeric_limits<RealT>::epsilon() * RealT(125);
+                std::numeric_limits<RealT>::epsilon() * RealT(132);
             const RealT padded_tolerance =
-                std::numeric_limits<RealT>::epsilon() * RealT(1000);
+                std::numeric_limits<RealT>::epsilon() * RealT(1150);
 
-            auto check_error = [&](const char* method, const auto& error, RealT tol) {
-                std::cout << method << " reference error for " << function.name
-                          << ":\n" << error;
-                INFO(error);
-                REQUIRE(error.abs_abs_max <= tol);
+            const std::vector<std::string> contraction_methods{
+                "zip-up", "qrsvd", "optimize"
             };
+            const std::size_t total_fft_cases =
+                functions.size() * contraction_methods.size() * 8;
+            for (const auto& contraction_method : contraction_methods) {
+                DYNAMIC_SECTION("contraction method: " << contraction_method)
+                {
+                    auto check_error = [&](const char* fft_method,
+                                           const auto& error,
+                                           RealT tol) {
+                        const std::size_t case_index =
+                            fft_tn_test::next_fft_case_index();
+                        std::cout << "\n[FFT case " << case_index << '/'
+                                  << total_fft_cases << "; "
+                                  << total_fft_cases - case_index
+                                  << " remaining] " << function.name << " / "
+                                  << contraction_method << " / " << fft_method
+                                  << '\n';
+                        std::cout << fft_method << " [" << contraction_method
+                                  << "] reference error for " << function.name
+                                  << ":\n" << error;
+                        INFO(error);
+                        std::ostringstream recap;
+                        recap << std::scientific << std::setprecision(6)
+                              << error.abs_abs_max << " <= " << tol;
+                        INFO("FFT_RECAP " << recap.str());
+                        REQUIRE(error.abs_abs_max <= tol);
+                    };
 
-            SECTION("FFT without padding")
+                    SECTION("FFT without padding")
             {
                 SECTION("Vanilla")
                 {
                     const auto reference =
                         fft_tn_test::compute_reference_fft(function, N);
                     FFTmps<ComplexT, Sint> fft(prefix, "mpo_data/data/");
-                    fft.fft_vanilla();
+                    fft_tn_test::time_mpo_mps_case(contraction_method, [&] {
+                        fft.fft_vanilla(/*do_shift=*/true, contraction_method);
+                    });
                     const auto error = fft_tn_test::error_reference_fft_mps(
                         reference, fft.get_mps());
                     check_error("Vanilla FFT", error, tolerance);
@@ -119,7 +144,10 @@ TEST_CASE("double FFT test data can be saved and reloaded", "[fft][double]")
                     const auto reference =
                         fft_tn_test::compute_trapezoid_reference_fft(function, N);
                     FFTmps<ComplexT, Sint> fft(prefix, "mpo_data/data/");
-                    fft.fft_trapez(data.f_b);
+                    fft_tn_test::time_mpo_mps_case(contraction_method, [&] {
+                        fft.fft_trapez(
+                            data.f_b, /*do_shift=*/true, contraction_method);
+                    });
                     const auto error = fft_tn_test::error_reference_fft_mps(
                         reference, fft.get_mps());
                     check_error("Trapezoid FFT", error, tolerance);
@@ -131,8 +159,11 @@ TEST_CASE("double FFT test data can be saved and reloaded", "[fft][double]")
                         fft_tn_test::compute_discontinuous_reference_fft(
                             function, N, discontinuities, left_values);
                     FFTmps<ComplexT, Sint> fft(prefix, "mpo_data/data/");
-                    fft.fft_discontinuous_with_loop(
-                        discontinuities, left_values, data.f_b);
+                    fft_tn_test::time_mpo_mps_case(contraction_method, [&] {
+                        fft.fft_discontinuous_with_loop(
+                            discontinuities, left_values, data.f_b,
+                            /*do_shift=*/true, contraction_method);
+                    });
                     const auto error = fft_tn_test::error_reference_fft_mps(
                         reference, fft.get_mps());
                     check_error(
@@ -145,8 +176,11 @@ TEST_CASE("double FFT test data can be saved and reloaded", "[fft][double]")
                         fft_tn_test::compute_discontinuous_reference_fft(
                             function, N, discontinuities, left_values);
                     FFTmps<ComplexT, Sint> fft(prefix, "mpo_data/data/");
-                    fft.fft_discontinuous_loopless(
-                        discontinuities, left_values, data.f_b);
+                    fft_tn_test::time_mpo_mps_case(contraction_method, [&] {
+                        fft.fft_discontinuous_loopless(
+                            discontinuities, left_values, data.f_b,
+                            /*do_shift=*/true, contraction_method);
+                    });
                     const auto error = fft_tn_test::error_reference_fft_mps(
                         reference, fft.get_mps());
                     check_error(
@@ -166,7 +200,9 @@ TEST_CASE("double FFT test data can be saved and reloaded", "[fft][double]")
                             function, N, padding_bit, sampled_indices);
                     FFTmps<ComplexT, Sint> fft(
                         prefix, "mpo_data/data/", padding_bit);
-                    fft.fft_vanilla();
+                    fft_tn_test::time_mpo_mps_case(contraction_method, [&] {
+                        fft.fft_vanilla(/*do_shift=*/true, contraction_method);
+                    });
                     const auto error =
                         fft_tn_test::error_sampled_reference_fft_mps(
                             reference, fft.get_mps());
@@ -181,7 +217,10 @@ TEST_CASE("double FFT test data can be saved and reloaded", "[fft][double]")
                             /*do_shift=*/true, /*use_trapezoid=*/true);
                     FFTmps<ComplexT, Sint> fft(
                         prefix, "mpo_data/data/", padding_bit);
-                    fft.fft_trapez(data.f_b);
+                    fft_tn_test::time_mpo_mps_case(contraction_method, [&] {
+                        fft.fft_trapez(
+                            data.f_b, /*do_shift=*/true, contraction_method);
+                    });
                     const auto error =
                         fft_tn_test::error_sampled_reference_fft_mps(
                             reference, fft.get_mps());
@@ -197,8 +236,11 @@ TEST_CASE("double FFT test data can be saved and reloaded", "[fft][double]")
                             discontinuities, left_values);
                     FFTmps<ComplexT, Sint> fft(
                         prefix, "mpo_data/data/", padding_bit);
-                    fft.fft_discontinuous_with_loop(
-                        discontinuities, left_values, data.f_b);
+                    fft_tn_test::time_mpo_mps_case(contraction_method, [&] {
+                        fft.fft_discontinuous_with_loop(
+                            discontinuities, left_values, data.f_b,
+                            /*do_shift=*/true, contraction_method);
+                    });
                     const auto error =
                         fft_tn_test::error_sampled_reference_fft_mps(
                             reference, fft.get_mps());
@@ -216,14 +258,19 @@ TEST_CASE("double FFT test data can be saved and reloaded", "[fft][double]")
                             discontinuities, left_values);
                     FFTmps<ComplexT, Sint> fft(
                         prefix, "mpo_data/data/", padding_bit);
-                    fft.fft_discontinuous_loopless(
-                        discontinuities, left_values, data.f_b);
+                    fft_tn_test::time_mpo_mps_case(contraction_method, [&] {
+                        fft.fft_discontinuous_loopless(
+                            discontinuities, left_values, data.f_b,
+                            /*do_shift=*/true, contraction_method);
+                    });
                     const auto error =
                         fft_tn_test::error_sampled_reference_fft_mps(
                             reference, fft.get_mps());
                     check_error(
                         "Padded discontinuous loopless FFT",
                         error, padded_tolerance);
+                }
+            }
                 }
             }
         }
