@@ -2,3 +2,6 @@
 	path = extern/TensorQuadOperation
 	url = https://github.com/bowangle/TensorQuadOperation.git
 	ignore = dirty
+[submodule "extern/Catch2"]
+	path = extern/Catch2
+	url = https://github.com/catchorg/Catch2.git
