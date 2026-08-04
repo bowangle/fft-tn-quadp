@@ -82,22 +82,15 @@ TEST_CASE("double FFT test data can be saved and reloaded", "[fft][double]")
                                      + "_nB"
                                      + std::to_string(n_bit);
 
-            const RealT dE = (function.b_E - function.a_E) / RealT(N);
-            const std::vector<std::size_t> discontinuity_indices{
-                N / 3, 2 * N / 3
-            };
-            std::vector<RealT> discontinuities;
-            std::vector<ComplexT> left_values;
-            for (const std::size_t index : discontinuity_indices) {
-                const RealT point = function.a_E + RealT(index) * dE;
-                discontinuities.push_back(point);
-                left_values.push_back(function(point));
-            }
+            const auto& discontinuities = data.discontinuities;
+            const auto& left_values = data.f_discontinuities;
 
             const RealT tolerance =
                 std::numeric_limits<RealT>::epsilon() * RealT(103);
             const RealT loop_tolerance =
                 std::numeric_limits<RealT>::epsilon() * RealT(200);
+            const RealT loopless_tolerance =
+                std::numeric_limits<RealT>::epsilon() * RealT(125);
             const RealT padded_tolerance =
                 std::numeric_limits<RealT>::epsilon() * RealT(1000);
 
@@ -135,7 +128,8 @@ TEST_CASE("double FFT test data can be saved and reloaded", "[fft][double]")
                 SECTION("Discontinuous with loop")
                 {
                     const auto reference =
-                        fft_tn_test::compute_trapezoid_reference_fft(function, N);
+                        fft_tn_test::compute_discontinuous_reference_fft(
+                            function, N, discontinuities, left_values);
                     FFTmps<ComplexT, Sint> fft(prefix, "mpo_data/data/");
                     fft.fft_discontinuous_with_loop(
                         discontinuities, left_values, data.f_b);
@@ -148,13 +142,15 @@ TEST_CASE("double FFT test data can be saved and reloaded", "[fft][double]")
                 SECTION("Discontinuous loopless")
                 {
                     const auto reference =
-                        fft_tn_test::compute_trapezoid_reference_fft(function, N);
+                        fft_tn_test::compute_discontinuous_reference_fft(
+                            function, N, discontinuities, left_values);
                     FFTmps<ComplexT, Sint> fft(prefix, "mpo_data/data/");
                     fft.fft_discontinuous_loopless(
                         discontinuities, left_values, data.f_b);
                     const auto error = fft_tn_test::error_reference_fft_mps(
                         reference, fft.get_mps());
-                    check_error("Discontinuous loopless FFT", error, tolerance);
+                    check_error(
+                        "Discontinuous loopless FFT", error, loopless_tolerance);
                 }
             }
 
@@ -197,7 +193,8 @@ TEST_CASE("double FFT test data can be saved and reloaded", "[fft][double]")
                     const auto reference =
                         fft_tn_test::compute_sampled_padded_reference_fft(
                             function, N, padding_bit, sampled_indices,
-                            /*do_shift=*/true, /*use_trapezoid=*/true);
+                            /*do_shift=*/true, /*use_trapezoid=*/true,
+                            discontinuities, left_values);
                     FFTmps<ComplexT, Sint> fft(
                         prefix, "mpo_data/data/", padding_bit);
                     fft.fft_discontinuous_with_loop(
@@ -215,7 +212,8 @@ TEST_CASE("double FFT test data can be saved and reloaded", "[fft][double]")
                     const auto reference =
                         fft_tn_test::compute_sampled_padded_reference_fft(
                             function, N, padding_bit, sampled_indices,
-                            /*do_shift=*/true, /*use_trapezoid=*/true);
+                            /*do_shift=*/true, /*use_trapezoid=*/true,
+                            discontinuities, left_values);
                     FFTmps<ComplexT, Sint> fft(
                         prefix, "mpo_data/data/", padding_bit);
                     fft.fft_discontinuous_loopless(

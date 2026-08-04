@@ -171,7 +171,11 @@ std::vector<FFTTestFunction<ComplexT>> make_fft_test_functions()
     const Real eps = Eigen::NumTraits<Real>::epsilon() * Real(10);
     const Real a_E = Real(-10) + eps;
     const Real b_E = Real(10) - eps;
-    const std::vector<Real> E_discontinuity = {Real(-1.5), Real(7.2)};
+    const Real interval = b_E - a_E;
+    const std::vector<Real> E_discontinuity = {
+        a_E + interval / Real(4),
+        a_E + Real(3) * interval / Real(4)
+    };
 
     return {
         {"cos_simple",            cos_simple<ComplexT>,            a_E, b_E, E_discontinuity},
@@ -267,6 +271,47 @@ FFTReference<ComplexT> compute_trapezoid_reference_fft(
     return compute_reference_fft(corrected, N, do_shift);
 }
 
+template <typename ComplexT>
+FFTReference<ComplexT> compute_discontinuous_reference_fft(
+    const FFTTestFunction<ComplexT>& function,
+    std::size_t N,
+    const std::vector<typename Eigen::NumTraits<ComplexT>::Real>& discontinuities,
+    const std::vector<ComplexT>& left_values,
+    bool do_shift = true)
+{
+    using Real = typename Eigen::NumTraits<ComplexT>::Real;
+
+    if (discontinuities.size() != left_values.size())
+        throw std::invalid_argument(
+            "compute_discontinuous_reference_fft: inconsistent discontinuity sizes");
+
+    const Real dE = (function.b_E - function.a_E) / Real(N);
+    for (const Real point : discontinuities) {
+        const Real q = (point - function.a_E) / dE;
+        const long long index = std::llround(q);
+        if (std::abs(q - Real(index)) > Real(1e-9) ||
+            index <= 0 || static_cast<std::size_t>(index) >= N)
+            throw std::invalid_argument(
+                "compute_discontinuous_reference_fft: discontinuity is not an interior grid point");
+    }
+
+    FFTTestFunction<ComplexT> corrected = function;
+    const ComplexT f_a = function(function.a_E);
+    const ComplexT f_b = function(function.b_E);
+    corrected.function =
+        [function, f_a, f_b, discontinuities, left_values](auto x) {
+            if (x == function.a_E)
+                return (f_a + f_b) / ComplexT(2, 0);
+            for (std::size_t i = 0; i < discontinuities.size(); ++i) {
+                if (x == discontinuities[i])
+                    return (function(x) + left_values[i]) / ComplexT(2, 0);
+            }
+            return function(x);
+        };
+
+    return compute_reference_fft(corrected, N, do_shift);
+}
+
 // Compare every value of a dense FFT reference with the corresponding MPS
 // entry. MPS/QTGrid bit strings are LSB-first.
 template <typename ComplexT>
@@ -346,7 +391,9 @@ SampledFFTReference<ComplexT> compute_sampled_padded_reference_fft(
     int padding_bit,
     const std::vector<std::size_t>& indices,
     bool do_shift = true,
-    bool use_trapezoid = false)
+    bool use_trapezoid = false,
+    const std::vector<typename Eigen::NumTraits<ComplexT>::Real>& discontinuities = {},
+    const std::vector<ComplexT>& left_values = {})
 {
     using Real = typename Eigen::NumTraits<ComplexT>::Real;
 
@@ -378,6 +425,21 @@ SampledFFTReference<ComplexT> compute_sampled_padded_reference_fft(
             samples[0] /= ComplexT(2, 0);
             samples[original_N] = function(function.b_E) / ComplexT(2, 0);
         }
+    }
+
+    if (discontinuities.size() != left_values.size())
+        throw std::invalid_argument(
+            "compute_sampled_padded_reference_fft: inconsistent discontinuity sizes");
+    for (std::size_t i = 0; i < discontinuities.size(); ++i) {
+        const Real q = (discontinuities[i] - function.a_E) / dE;
+        const long long signed_index = std::llround(q);
+        if (std::abs(q - Real(signed_index)) > Real(1e-9) ||
+            signed_index <= 0 ||
+            static_cast<std::size_t>(signed_index) >= original_N)
+            throw std::invalid_argument(
+                "compute_sampled_padded_reference_fft: discontinuity is not an interior grid point");
+        const std::size_t index = static_cast<std::size_t>(signed_index);
+        samples[index] = (samples[index] + left_values[i]) / ComplexT(2, 0);
     }
 
     SampledFFTReference<ComplexT> reference{
