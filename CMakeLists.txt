@@ -46,7 +46,10 @@ if(FFT_TN_BUILD_TESTS)
     # One entry per test/test_<name>.cpp -> target fft_tn_test_<name>
     set(_fft_tn_tests
         magic_qft_mpo
-        fft_vanilla)
+        fft_vanilla
+        fft_double
+        fft_dd128
+        fft_float128)
 
     foreach(_name IN LISTS _fft_tn_tests)
         add_executable(fft_tn_test_${_name} test/test_${_name}.cpp)
