@@ -139,8 +139,8 @@ TEST_CASE("dd128 translated grids isolate the post-QFT origin phase",
           "[fft][dd128][phase]")
 {
     // This is intentionally much looser than the QFT/identity-phase errors
-    // observed in the existing data (~1e-28), while still far below the
-    // growing large-angle phase error at high resolution.
+    // observed in the existing data (~1e-28), while still tight enough to
+    // catch the former large-angle phase regression at high resolution.
     const Real roundoff_tolerance = Real(1e-24);
 
     std::cout << std::scientific
@@ -171,8 +171,8 @@ TEST_CASE("dd128 translated grids isolate the post-QFT origin phase",
             CHECK(errors.zero_origin <= roundoff_tolerance);
             CHECK(errors.translated_positive <= roundoff_tolerance);
 
-            // This is the regression assertion expected to expose the current
-            // QD large-argument reduction problem on the negative-time side.
+            // Guard the negative-time two's-complement cancellation that the
+            // former independent large-angle phase construction destroyed.
             CHECK(errors.translated_negative <= roundoff_tolerance);
         }
     }

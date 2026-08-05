@@ -2,6 +2,7 @@
 
 #include <string>
 #include <cmath>
+#include <complex>
 #include <type_traits>
 
 #include <mps_base.h>
@@ -494,21 +495,42 @@ private:
     }
 
     // --- phase MPS: exp(-1j * t_m * a) ------------------------------------
+    // Generate all bit phases from one base-angle exponential.  Independent
+    // exp() calls at a*dt*2^k require increasingly inaccurate large-argument
+    // reduction (notably for dd_real) and destroy the cancellation used by
+    // small negative two's-complement indices.
     static MPS<Cscalar> _phase_mps_exp_1j_t_a(int nBits, RealScalar a, RealScalar dt)
     {
         std::vector<Tensor3D<Cscalar>> cores;
         cores.reserve(nBits);
-        RealScalar theta_factor = a * dt;
-        RealScalar pow2 = RealScalar(1);
-        for (int k = 0; k < nBits; ++k) {
-            RealScalar theta = theta_factor * pow2;
-            pow2 *= RealScalar(2);
-            int sign = (k < nBits - 1) ? -1 : 1;
+
+        auto normalize_phase = [](Cscalar value) {
+            using std::abs;
+            const RealScalar magnitude = abs(value);
+            return value / Cscalar(magnitude, 0);
+        };
+
+        // Lower bits have weights +2^k in the signed time index.
+        Cscalar phase = normalize_phase(std::exp(Cscalar(0, -a * dt)));
+        for (int k = 0; k < nBits - 1; ++k) {
             Tensor3D<Cscalar> core(1, 2, 1);
             core(0, 0, 0) = Cscalar(1, 0);
-            core(0, 1, 0) = std::exp(Cscalar(0, (sign == 1) ? theta : -theta));
+            core(0, 1, 0) = phase;
             cores.push_back(std::move(core));
+
+            // Keep the bit phases mutually coherent and on the unit circle.
+            // Normalization prevents a radial roundoff error from being
+            // doubled by every subsequent squaring.
+            phase = normalize_phase(phase * phase);
         }
+
+        // The MSB has two's-complement weight -2^(nBits-1), hence the
+        // conjugate of the phase produced by the same doubling recurrence.
+        Tensor3D<Cscalar> msb_core(1, 2, 1);
+        msb_core(0, 0, 0) = Cscalar(1, 0);
+        msb_core(0, 1, 0) = std::conj(phase);
+        cores.push_back(std::move(msb_core));
+
         return MPS<Cscalar>(std::move(cores));
     }
 
