@@ -2,6 +2,7 @@
 
 #include <string>
 #include <cmath>
+#include <type_traits>
 
 #include <mps_base.h>
 #include <mpo_base.h>
@@ -163,28 +164,29 @@ public:
         mps = MPS<Cscalar>(reverse_cores(mps.get_core()), mps.get_max_bond_dim(),
                         mps.get_reltol(), mps.get_w());
 
-        const int  nB = int(mps.get_core().size());
-        const long long N_orig = 1LL << (nB - padding_bit);
+        const int nB = int(mps.get_core().size());
+        const Sint N_orig = Sint(1) << (nB - padding_bit);
         const RealScalar a = grid.get_a(), dx = grid.get_dx();
 
         // --- validate and index the discontinuities (conditions 1 and 6) ---
-        std::vector<long long> idx;
+        std::vector<Sint> idx;
         for (size_t j = 0; j < l_disc.size(); ++j) {
             RealScalar q = (l_disc[j] - a) / dx;
-            long long  i = llround(q);
+            const Sint i = _round_to_sint(q);
             using std::abs;
             if (abs(q - RealScalar(i)) > RealScalar(1e-9))
                 throw std::invalid_argument("discontinuity not on a grid point");
-            if (i <= 0 || i >= N_orig)
+            if (i <= Sint(0) || i >= N_orig)
                 throw std::invalid_argument("discontinuity outside (a, b)");
             if (j > 0 && i <= idx.back())
                 throw std::invalid_argument("l_disc must be strictly increasing");
             idx.push_back(i);
         }
 
-        auto bits_of = [nB](long long n) {
+        auto bits_of = [nB](Sint n) {
             std::vector<int> v(nB, 0);
-            for (int k = 0; k < nB; ++k) v[k] = int((n >> (nB - 1 - k)) & 1LL);
+            for (int k = 0; k < nB; ++k)
+                v[k] = int((n >> (nB - 1 - k)) & Sint(1));
             return v;
         };
 
@@ -194,8 +196,8 @@ public:
 
         for (size_t i = 0; i <= K; ++i) {
             const bool first = (i == 0), last = (i == K);
-            const long long L = first ? 0        : idx[i - 1];
-            const long long U = last  ? N_orig   : idx[i];
+            const Sint L = first ? Sint(0) : idx[i - 1];
+            const Sint U = last  ? N_orig : idx[i];
 
             // --- restrict to [L, U) ---
             auto ind = _mps_indicator_interval(nB, L, U, !first, !last, max_chi, reltol);
@@ -267,14 +269,15 @@ public:
 
         // 2. Endpoint and discontinuity corrections, all before the QFT
         {
-            const int       nB     = int(mps.get_core().size());
-            const long long N_orig = 1LL << (nB - padding_bit);
-            const RealScalar a     = grid.get_a();
-            const RealScalar dx    = grid.get_dx();
+            const int  nB     = int(mps.get_core().size());
+            const Sint N_orig = Sint(1) << (nB - padding_bit);
+            const RealScalar a  = grid.get_a();
+            const RealScalar dx = grid.get_dx();
 
-            auto bits_of = [nB](long long n) {
+            auto bits_of = [nB](Sint n) {
                 std::vector<int> v(nB, 0);
-                for (int k = 0; k < nB; ++k) v[k] = int((n >> (nB - 1 - k)) & 1LL);
+                for (int k = 0; k < nB; ++k)
+                    v[k] = int((n >> (nB - 1 - k)) & Sint(1));
                 return v;
             };
 
@@ -282,14 +285,14 @@ public:
             // Evaluate every value against the ORIGINAL mps before modifying it.
             std::vector<std::vector<int>> d_bits;
             std::vector<Cscalar>          d_delta;
-            long long prev = 0;
+            Sint prev = Sint(0);
             for (size_t j = 0; j < l_disc.size(); ++j) {
                 RealScalar q = (l_disc[j] - a) / dx;
-                long long  i = llround(q);
+                const Sint i = _round_to_sint(q);
                 using std::abs;
                 if (abs(q - RealScalar(i)) > RealScalar(1e-9))
                     throw std::invalid_argument("discontinuity not on a grid point");
-                if (i <= 0 || i >= N_orig)
+                if (i <= Sint(0) || i >= N_orig)
                     throw std::invalid_argument("discontinuity outside (a, b)");
                 if (j > 0 && i <= prev)
                     throw std::invalid_argument("l_disc must be strictly increasing");
@@ -380,6 +383,7 @@ public:
 
     Eigen::Index get_chi() const { return mps.get_chi(); }
     MPS<Cscalar> const& get_mps() const { return mps; }
+    QTGrid<RealScalar, Sint> const& get_grid() const { return grid; }
     Cscalar eval(std::vector<int> const& bits) const { return mps.eval(bits); }
     RealScalar get_a() const { return grid.get_a(); }
 
@@ -514,17 +518,39 @@ private:
         return MPS<Cscalar>(std::move(cores));
     }
 
+    // Round a grid coordinate directly to the configured index type. In
+    // particular, preserve both components of dd_128 instead of narrowing
+    // through long long.
+    static Sint _round_to_sint(RealScalar value)
+    {
+        using std::ceil;
+        using std::floor;
+        const RealScalar rounded = value < RealScalar(0)
+            ? ceil(value - RealScalar(0.5))
+            : floor(value + RealScalar(0.5));
+
+        if constexpr (std::is_same_v<RealScalar, dd_128>) {
+            return static_cast<Sint>(rounded._hi())
+                 + static_cast<Sint>(rounded._lo());
+        } else if constexpr (std::is_arithmetic_v<Sint>
+                             || std::is_same_v<Sint, __int128>) {
+            return static_cast<Sint>(rounded);
+        } else {
+            return rounded.template convert_to<Sint>();
+        }
+    }
+
     // Diagonal indicator for L <= n < U, as an MPS over MSB-first bits.
     // Bond dim 4: state = (sL, sU), sL in {equal-so-far, already-greater},
     //                               sU in {equal-so-far, already-less}.
     // has_L / has_U = false disables that bound (interval open on that side).
     // Requires Tensor3D to zero-initialise.
-    static MPS<Cscalar> _mps_indicator_interval(int nBits, long long L, long long U,
+    static MPS<Cscalar> _mps_indicator_interval(int nBits, Sint L, Sint U,
                                                 bool has_L, bool has_U,
                                                 int max_chi_, RealScalar reltol_)
     {
-        auto bit_of = [nBits](long long x, int k) -> int {
-            return int((x >> (nBits - 1 - k)) & 1LL);
+        auto bit_of = [nBits](Sint x, int k) -> int {
+            return int((x >> (nBits - 1 - k)) & Sint(1));
         };
 
         const int S = 4;                                   // 0=(E,E) 1=(E,L) 2=(G,E) 3=(G,L)
