@@ -65,6 +65,7 @@ if(FFT_TN_BUILD_TESTS)
         fft_double
         fft_convergence_double
         fft_convergence_dd128
+        fft_phase_dd128
         fft_dd128
         fft_float128)
 

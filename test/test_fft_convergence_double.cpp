@@ -193,6 +193,50 @@ Real fft_error(const TestFunction& test_function,
     return max_error;
 }
 
+// Apply the QFT MPO to an exact rank-one constant MPS and inspect only its
+// zero-frequency output. This isolates the common QFT/contraction error from
+// TCI and from the quadrature corrections.
+Real qft_constant_dc_error(int n_bit, int padding)
+{
+    const int fft_n_bit = n_bit + padding;
+    std::vector<Tensor3D<Complex>> cores;
+    cores.reserve(fft_n_bit);
+
+    for (int bit = 0; bit < n_bit; ++bit) {
+        Tensor3D<Complex> core(1, 2, 1);
+        core(0, 0, 0) = Complex(1, 0);
+        core(0, 1, 0) = Complex(1, 0);
+        cores.push_back(std::move(core));
+    }
+    for (int bit = 0; bit < padding; ++bit) {
+        Tensor3D<Complex> core(1, 2, 1);
+        core(0, 0, 0) = Complex(1, 0);
+        cores.push_back(std::move(core));
+    }
+
+    MPS<Complex> constant_mps(
+        FFTmps<Complex, Sint>::reverse_cores(cores),
+        fft_max_bond_dimension,
+        fft_reltol,
+        -1);
+
+    const Sint N_orig = Sint(1) << n_bit;
+    const Sint N_fft = Sint(1) << fft_n_bit;
+    const Real dx = (energy_max - energy_min) / Real(N_orig);
+    constant_mps *= magic_tensor_qft::real_sqrt(Real(N_fft)) * dx
+                  / (Real(2) * magic_tensor_qft::pi<Real>());
+
+    auto qft = magic_tensor_qft::load_compressed_qft_mpo<Complex>(
+        fft_n_bit, qft_path, fft_reltol, fft_max_bond_dimension);
+    const MPS<Complex> transformed = qft._mul(constant_mps, "zip-up");
+    const Complex actual = transformed.eval(std::vector<int>(fft_n_bit, 0));
+    const Complex expected(
+        (energy_max - energy_min)
+            / (Real(2) * magic_tensor_qft::pi<Real>()),
+        0);
+    return std::abs(actual - expected);
+}
+
 bool should_reach_roundoff(const std::string& function,
                            const std::string& method)
 {
@@ -221,8 +265,21 @@ TEST_CASE("double FFT methods converge to adaptive-quadrature references",
         for (const auto& test_function : functions)
             fit_tci(test_function, n_bit);
 
+        const Real qft_dc_unpadded = qft_constant_dc_error(n_bit, 0);
+        const Real qft_dc_padded = qft_constant_dc_error(n_bit, padding_bits);
+
         for (const auto& test_function : functions) {
             for (const int padding : {0, padding_bits}) {
+                const Real qft_dc_error = padding == 0
+                    ? qft_dc_unpadded
+                    : qft_dc_padded;
+                output << test_function.name << ",qft_constant_dc,"
+                       << padding << ',' << n_bit << ',' << qft_dc_error << '\n';
+                std::cout << test_function.name << ", qft_constant_dc"
+                          << ", padding=" << padding
+                          << ", nBit=" << n_bit
+                          << ", error=" << qft_dc_error << '\n';
+
                 for (const auto& method : methods) {
                     const Real error = fft_error(
                         test_function, method, n_bit, padding);
