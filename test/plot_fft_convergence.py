@@ -27,17 +27,56 @@ def plot_scalar_type(scalar_type: str, csv_file: Path, show: bool):
     functions = sorted({key[0] for key in grouped})
     for function in functions:
         fig, axis = plt.subplots(figsize=(8, 5))
+        function_values = []
         for (name, method, padding), values in sorted(grouped.items()):
             if name != function:
                 continue
             values.sort()
-            axis.plot(
-                [value[0] for value in values],
-                [value[1] for value in values],
+            function_values.extend(values)
+            n_bits = [value[0] for value in values]
+            errors = [value[1] for value in values]
+            data_line, = axis.plot(
+                n_bits,
+                errors,
                 marker="o",
                 linestyle="-" if padding == 0 else "--",
                 label=f"{method}, padding={padding}",
             )
+
+            # Anchor both convergence guides to this curve's first point.
+            if values and errors[0] > 0:
+                anchor_n = n_bits[0]
+                anchor_error = errors[0]
+                guide_options = {
+                    "color": data_line.get_color(),
+                    "linewidth": 1.0,
+                    "alpha": 0.22,
+                    "label": "_nolegend_",
+                }
+                axis.plot(
+                    n_bits,
+                    [anchor_error * 2.0 ** (-(n_bit - anchor_n))
+                     for n_bit in n_bits],
+                    linestyle=":",
+                    **guide_options,
+                )
+                axis.plot(
+                    n_bits,
+                    [anchor_error * 2.0 ** (-2 * (n_bit - anchor_n))
+                     for n_bit in n_bits],
+                    linestyle="-.",
+                    **guide_options,
+                )
+
+        positive_errors = [error for _, error in function_values if error > 0]
+        if positive_errors:
+            # Generic legend entries for the faint per-curve guides.
+            axis.plot([], [], color="gray", linestyle=":", alpha=0.45,
+                      linewidth=1.0, label=r"$1/N$ guide")
+            axis.plot([], [], color="gray", linestyle="-.", alpha=0.45,
+                      linewidth=1.0, label=r"$1/N^2$ guide")
+            # Keep reference guides from expanding the plot beyond the data.
+            axis.set_ylim(min(positive_errors) / 3, max(positive_errors) * 3)
 
         axis.set(
             title=f"FFT convergence ({scalar_type}): {function}",

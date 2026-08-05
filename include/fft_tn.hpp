@@ -78,27 +78,25 @@ public:
         // 1. Reverse cores for endian consistency with the QFT MPO
         mps = MPS<Cscalar>(reverse_cores(mps.get_core()), mps.get_max_bond_dim(), mps.get_reltol(), mps.get_w());
 
-        // 2. Apply QFT MPO
+        // 2. Scale before the QFT to keep the contracted MPS well-conditioned.
+        mps *= magic_tensor_qft::real_sqrt(RealScalar(grid.get_N()))
+             * grid.get_dx() / (RealScalar(2) * pi<RealScalar>());
+
+        // 3. Apply QFT MPO
         mps = QFT_E_T._mul(mps, method);
 
-        // 3. Normalisation: *√N
-        mps *= magic_tensor_qft::real_sqrt(RealScalar(grid.get_N()));
-
-        // 4. Phase factor: *dx / (2π)
-        mps *= grid.get_dx() / (RealScalar(2) * pi<RealScalar>());
-
-        // 5. Time-dependent phase: exp(-1j * t * a)
+        // 4. Time-dependent phase: exp(-1j * t * a)
         RealScalar dt = RealScalar(2) * pi<RealScalar>() / (RealScalar(grid.get_N()) * grid.get_dx());
         auto mps_phase = _phase_mps_exp_1j_t_a(grid.get_nBits(), grid.get_a(), dt);
         mps_phase = MPS<Cscalar>(mps_phase.get_core(), max_chi, reltol, mps_phase.get_w());
         auto phase_mpo = MPO<Cscalar>::from_mps(mps_phase);
         mps = phase_mpo._mul(mps, method);
 
-        // 6. Optional fftshift
+        // 5. Optional fftshift
         if (do_shift)
             mps = _fft_shift(mps);
 
-        // 7. Update grid to dual grid
+        // 6. Update grid to dual grid
         grid = grid.build_dual_grid(do_shift);
     }
 
@@ -127,27 +125,25 @@ public:
             }
         }
 
-        // 3. Apply QFT MPO
+        // 3. Scale before the QFT to keep the contracted MPS well-conditioned.
+        mps *= magic_tensor_qft::real_sqrt(RealScalar(grid.get_N()))
+             * grid.get_dx() / (RealScalar(2) * pi<RealScalar>());
+
+        // 4. Apply QFT MPO
         mps = QFT_E_T._mul(mps, method);
 
-        // 4. Normalisation: *√N
-        mps *= magic_tensor_qft::real_sqrt(RealScalar(grid.get_N()));
-
-        // 5. Phase factor: *dx / (2π)
-        mps *= grid.get_dx() / (RealScalar(2) * pi<RealScalar>());
-
-        // 6. Time-dependent phase: exp(-1j * t * a)
+        // 5. Time-dependent phase: exp(-1j * t * a)
         RealScalar dt = RealScalar(2) * pi<RealScalar>() / (RealScalar(grid.get_N()) * grid.get_dx());
         auto mps_phase = _phase_mps_exp_1j_t_a(grid.get_nBits(), grid.get_a(), dt);
         mps_phase = MPS<Cscalar>(mps_phase.get_core(), max_chi, reltol, mps_phase.get_w());
         auto phase_mpo = MPO<Cscalar>::from_mps(mps_phase);
         mps = phase_mpo._mul(mps, method);
 
-        // 7. Optional fftshift
+        // 6. Optional fftshift
         if (do_shift)
             mps = _fft_shift(mps);
 
-        // 8. Update grid to dual grid
+        // 7. Update grid to dual grid
         grid = grid.build_dual_grid(do_shift);
     }
 
@@ -225,10 +221,10 @@ public:
 
         mps = mps_out;
 
-        // --- 3..8: identical to fft_vanilla from here ---
+        // Scale before the QFT to keep the contracted MPS well-conditioned.
+        mps *= magic_tensor_qft::real_sqrt(RealScalar(grid.get_N()))
+             * grid.get_dx() / (RealScalar(2) * pi<RealScalar>());
         mps = QFT_E_T._mul(mps, method);
-        mps *= magic_tensor_qft::real_sqrt(RealScalar(grid.get_N()));
-        mps *= grid.get_dx() / (RealScalar(2) * pi<RealScalar>());
         RealScalar dt = RealScalar(2) * pi<RealScalar>()
                     / (RealScalar(grid.get_N()) * grid.get_dx());
         auto mps_phase = _phase_mps_exp_1j_t_a(grid.get_nBits(), grid.get_a(), dt);
@@ -323,27 +319,25 @@ public:
                 mps = mps + _mps_single_point(d_bits[j], d_delta[j]);
         }
 
-        // 3. Apply QFT MPO
+        // 3. Scale before the QFT to keep the contracted MPS well-conditioned.
+        mps *= magic_tensor_qft::real_sqrt(RealScalar(grid.get_N()))
+             * grid.get_dx() / (RealScalar(2) * pi<RealScalar>());
+
+        // 4. Apply QFT MPO
         mps = QFT_E_T._mul(mps, method);
 
-        // 4. Normalisation: *sqrt(N)
-        mps *= magic_tensor_qft::real_sqrt(RealScalar(grid.get_N()));
-
-        // 5. Phase factor: *dx / (2*pi)
-        mps *= grid.get_dx() / (RealScalar(2) * pi<RealScalar>());
-
-        // 6. Time-dependent phase: exp(-1j * t * a)
+        // 5. Time-dependent phase: exp(-1j * t * a)
         RealScalar dt = RealScalar(2) * pi<RealScalar>()
                     / (RealScalar(grid.get_N()) * grid.get_dx());
         auto mps_phase = _phase_mps_exp_1j_t_a(grid.get_nBits(), grid.get_a(), dt);
         mps_phase = MPS<Cscalar>(mps_phase.get_core(), max_chi, reltol, mps_phase.get_w());
         mps = MPO<Cscalar>::from_mps(mps_phase)._mul(mps, method);
 
-        // 7. Optional fftshift
+        // 6. Optional fftshift
         if (do_shift)
             mps = _fft_shift(mps);
 
-        // 8. Update grid to dual grid
+        // 7. Update grid to dual grid
         grid = grid.build_dual_grid(do_shift);
     }
 
