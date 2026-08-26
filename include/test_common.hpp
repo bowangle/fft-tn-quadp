@@ -328,7 +328,7 @@ FFTReference<ComplexT> compute_discontinuous_reference_fft(
             "compute_discontinuous_reference_fft: inconsistent discontinuity sizes");
 
     const Real dE = (function.b_E - function.a_E) / Real(N);
-    for (const Real point : discontinuities) {
+    for (const Real& point : discontinuities) {
         const Real q = (point - function.a_E) / dE;
         const util::i128 index = detail::round_to_i128(q);
         if (detail::abs_value(q - Real(index)) > Real(1e-9) ||

@@ -61,6 +61,7 @@ if(FFT_TN_BUILD_TESTS)
     set(_fft_tn_tests
         magic_qft_mpo
         general_integrator
+        fft_param
         fft_vanilla
         fft_double
         fft_convergence_double

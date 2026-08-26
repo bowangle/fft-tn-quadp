@@ -3,11 +3,15 @@
 #include <string>
 #include <cmath>
 #include <complex>
+#include <tuple>
 #include <type_traits>
+#include <vector>
 
 #include <mps_base.h>
 #include <mpo_base.h>
 #include <grid.h>
+#include <xf-qd-runner.hpp>
+#include "fft_param.hpp"
 #include "magic_tensor_qft.hpp"
 
 template <typename Cscalar, typename Sint>
@@ -34,6 +38,8 @@ public:
         _add_n_padding(mps, grid, padding_bit);
     }
     
+    
+
     // constructor where we provide path to file:
     // assume mps armadillo file format with .tt extension for tt and grid file format in _grid.tt
     FFTmps(
@@ -52,6 +58,47 @@ public:
     {
         _add_n_padding(mps, grid, padding_bit);
     }
+
+    // Convenience constructor configured from persisted FFT parameters.
+    FFTmps(
+        const std::string& prefix_mps,
+        const std::string& folder_qft_data,
+        const fft_param<Cscalar>& param,
+        const std::string& prefix_output = "")
+        : FFTmps(prefix_mps,
+                 folder_qft_data,
+                 param.padding_bit,
+                 param.max_chi,
+                 param.reltol)
+    {
+        Cscalar f_b;
+        std::vector<RealScalar> l_disc;
+        std::vector<Cscalar> l_f_disc;
+
+        std::tie(f_b, l_disc, l_f_disc) =
+            load_fvalues_from_json<Cscalar>(prefix_mps + "_f_values.json");
+
+        fft_discontinuous_loopless(
+            l_disc, l_f_disc, f_b, param.do_shift, param.method);
+
+        if (!prefix_output.empty()) {
+            mps.save(prefix_output);
+            grid.save_json(prefix_output);
+            param.save(prefix_output + "_fft_param.json");
+        }
+    }
+
+    // Convenience constructor loading FFT parameters from JSON.
+    FFTmps(
+        const std::string& prefix_mps,
+        const std::string& folder_qft_data,
+        const std::string& fft_param_path,
+        const std::string& prefix_output = "")
+        : FFTmps(prefix_mps,
+                 folder_qft_data,
+                 fft_param<Cscalar>(fft_param_path),
+                 prefix_output)
+    {}
 
     // --- reverse cores: swap left↔right on each core, then reverse order ---
     // TODO we need to move this to TensorQuadOperation

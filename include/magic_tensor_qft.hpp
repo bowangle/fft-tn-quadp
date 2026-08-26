@@ -4,7 +4,10 @@
 #include <vector>
 #include <complex>
 #include <cstddef>
+#include <filesystem>
+#include <iostream>
 #include <random>
+#include <string>
 
 #include "mpo_base.h"
 #include "type_double_double.h"
@@ -385,7 +388,9 @@ const char* qft_type_label() {
 // ============================================================
 // load_compressed_qft_mpo
 //   Load a precomputed compressed QFT MPO from disk.
-//   Files are expected at path/compress_QFT_nBit={nBit}_{type_label}.tt
+//   Files are expected at path/compress_QFT_nBit={nBit}_{type_label}.tt.
+//   If the requested file is absent, build and compress it using the same
+//   settings as precompute_qft, save it in path, and then load it normally.
 //   The type_label is deduced from ComplexT via qft_type_label.
 // ============================================================
 template<typename ComplexT>
@@ -396,8 +401,39 @@ MPO<ComplexT> load_compressed_qft_mpo(
     int max_bond_dim_ = 0
 )
 {
-    std::string filename = path + "compress_QFT_nBit=" + std::to_string(nBit) + "_" + qft_type_label<ComplexT>() + ".tt";
-    return MPO<ComplexT>(filename, /*max_bond_dim_=*/max_bond_dim_, /*reltol_=*/reltol_, /*w_=*/-1); // w_=-1 skip the intial QR. We saved it after a compression
+    using Real = typename Eigen::NumTraits<ComplexT>::Real;
+
+    const std::filesystem::path directory(path);
+    const std::string basename =
+        "compress_QFT_nBit=" + std::to_string(nBit) + "_"
+        + qft_type_label<ComplexT>();
+    const std::filesystem::path file_prefix = directory / basename;
+    const std::filesystem::path filename = file_prefix.string() + ".tt";
+
+    if (!std::filesystem::exists(filename)) {
+        std::cerr
+            << "Warning: compressed QFT MPO '" << filename.string()
+            << "' was not found. Building, compressing, and saving it now; "
+               "this may take some time.\n";
+
+        if (!directory.empty())
+            std::filesystem::create_directories(directory);
+
+        constexpr int construction_chi = 35;
+        const Real compression_reltol =
+            Eigen::NumTraits<Real>::epsilon() * Real(100);
+
+        auto qft_mpo = build_qft_mpo_magic<ComplexT>(
+            nBit, construction_chi);
+        qft_mpo.compress_svd(compression_reltol, -1);
+        qft_mpo.save(file_prefix.string());
+    }
+
+    // w_=-1 skips the initial QR because the saved MPO was already compressed.
+    return MPO<ComplexT>(filename.string(),
+                         /*max_bond_dim_=*/max_bond_dim_,
+                         /*reltol_=*/reltol_,
+                         /*w_=*/-1);
 }
 
 } // namespace magic_tensor_qft
