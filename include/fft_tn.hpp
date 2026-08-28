@@ -1,8 +1,13 @@
 #pragma once
 
 #include <string>
+#include <algorithm>
 #include <cmath>
 #include <complex>
+#include <iomanip>
+#include <iostream>
+#include <limits>
+#include <sstream>
 #include <tuple>
 #include <type_traits>
 #include <vector>
@@ -217,9 +222,8 @@ public:
         for (size_t j = 0; j < l_disc.size(); ++j) {
             RealScalar q = (l_disc[j] - a) / dx;
             const Sint i = _round_to_sint(q);
-            using std::abs;
-            if (abs(q - RealScalar(i)) > RealScalar(1e-9))
-                throw std::invalid_argument("discontinuity not on a grid point");
+            _warn_if_discontinuity_is_off_grid(
+                "fft_discontinuous_with_loop", j, l_disc[j], a, dx, q, i);
             if (i <= Sint(0) || i >= N_orig)
                 throw std::invalid_argument("discontinuity outside (a, b)");
             if (j > 0 && i <= idx.back())
@@ -333,9 +337,8 @@ public:
             for (size_t j = 0; j < l_disc.size(); ++j) {
                 RealScalar q = (l_disc[j] - a) / dx;
                 const Sint i = _round_to_sint(q);
-                using std::abs;
-                if (abs(q - RealScalar(i)) > RealScalar(1e-9))
-                    throw std::invalid_argument("discontinuity not on a grid point");
+                _warn_if_discontinuity_is_off_grid(
+                    "fft_discontinuous_loopless", j, l_disc[j], a, dx, q, i);
                 if (i <= Sint(0) || i >= N_orig)
                     throw std::invalid_argument("discontinuity outside (a, b)");
                 if (j > 0 && i <= prev)
@@ -579,6 +582,42 @@ private:
         cores.push_back(std::move(msb_core));
 
         return MPS<Cscalar>(std::move(cores));
+    }
+
+    static void _warn_if_discontinuity_is_off_grid(
+        const char* implementation,
+        size_t discontinuity_number,
+        RealScalar discontinuity,
+        RealScalar a,
+        RealScalar dx,
+        RealScalar q,
+        Sint nearest_index)
+    {
+        using std::abs;
+        const RealScalar grid_error = abs(q - RealScalar(nearest_index));
+        const RealScalar warning_threshold = RealScalar(1e-9);
+        if (grid_error <= warning_threshold)
+            return;
+
+        const RealScalar ulp_scale =
+            Eigen::NumTraits<RealScalar>::epsilon()
+            * std::max(RealScalar(1), abs(q));
+
+        std::ostringstream warning;
+        warning << std::setprecision(
+                       std::numeric_limits<RealScalar>::max_digits10)
+                << "[FFT warning] " << implementation
+                << ": discontinuity[" << discontinuity_number << "]"
+                << "; x=" << discontinuity
+                << ", a=" << a
+                << ", dx=" << dx
+                << ", q=" << q
+                << ", nearest_index=" << RealScalar(nearest_index)
+                << ", |q-index|=" << grid_error
+                << ", approximate_ulps=" << grid_error / ulp_scale
+                << ", warning_threshold=" << warning_threshold
+                << '\n';
+        std::cerr << warning.str();
     }
 
     // Round a grid coordinate directly to the configured index type. In
